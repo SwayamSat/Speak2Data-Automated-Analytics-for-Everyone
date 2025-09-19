@@ -105,7 +105,7 @@ def main():
     # Set up API key and model
     if api_key:
         nlp_processor.set_api_key(api_key)
-        nlp_processor.set_model("gemini-pro")
+        nlp_processor.set_model("gemini-1.5-flash")  # Updated model name
     
     # Sidebar for database management
     with st.sidebar:
@@ -279,7 +279,7 @@ def main():
                 with st.expander("🐛 Debug Information"):
                     st.write(f"**Error Type:** {type(e).__name__}")
                     st.write(f"**Error Message:** {str(e)}")
-                    st.write(f"**Model:** gemini-pro")
+                    st.write(f"**Model:** gemini-1.5-flash")
                     st.write(f"**Temperature:** {temperature}")
 
     # Footer

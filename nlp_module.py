@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional
 class NLPProcessor:
     def __init__(self):
         self.client = None
-        self.model_name = "gemini-pro"
+        self.model_name = "gemini-1.5-flash"  # Updated model name
         self.model = None
     
     def set_api_key(self, api_key: str):
