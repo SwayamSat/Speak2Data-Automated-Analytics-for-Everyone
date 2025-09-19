@@ -67,6 +67,7 @@ Try these natural language queries:
 ├── db_module.py        # Database management
 ├── requirements.txt    # Python dependencies
 ├── .env               # Environment variables (API key)
+├── .gitignore         # Git ignore patterns
 ├── database/
 │   └── sample.db      # SQLite database (created automatically)
 └── README.md          # This file
