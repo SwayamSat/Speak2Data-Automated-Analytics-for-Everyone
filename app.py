@@ -13,8 +13,8 @@ load_dotenv()
 
 # Configure Streamlit page
 st.set_page_config(
-    page_title="NLP to SQL Converter (Powered by Gemini)",
-    page_icon="🤖",
+    page_title="NLP to SQL Converter",
+    page_icon="⚡",
     layout="wide"
 )
 
@@ -93,8 +93,8 @@ def create_automatic_visualizations(df):
     return visualizations
 
 def main():
-    st.title("🤖 Natural Language to SQL Converter")
-    st.markdown("**Convert natural language queries into SQL and retrieve data with automatic visualizations using Google's Gemini AI**")
+    st.title("Natural Language to SQL Converter")
+    st.markdown("Convert natural language queries into SQL and retrieve data with automatic visualizations using Google's Gemini AI")
     
     # Load API key from environment
     api_key = os.getenv("GOOGLE_API_KEY")
@@ -105,17 +105,17 @@ def main():
     # Set up API key and model
     if api_key:
         nlp_processor.set_api_key(api_key)
-        nlp_processor.set_model("gemini-1.5-flash")  # Updated model name
+        nlp_processor.set_model("gemini-1.5-flash")
     
     # Sidebar for database management
     with st.sidebar:
-        st.header("🗄️ Database Management")
+        st.header("Database Management")
         
         # Database initialization
         if st.button("Initialize Sample Database", key="init_db"):
             with st.spinner("Setting up sample database..."):
                 db_manager.initialize_database()
-                st.success("✅ Sample database initialized!")
+                st.success("Sample database initialized!")
                 st.rerun()
         
         # Show available tables
@@ -123,7 +123,7 @@ def main():
         if tables:
             st.subheader("Available Tables")
             for table in tables:
-                st.write(f"📋 {table}")
+                st.write(f"• {table}")
                 
                 # Show sample data for each table
                 with st.expander(f"View {table} sample"):
@@ -132,32 +132,32 @@ def main():
                         st.dataframe(sample_df, use_container_width=True)
         
         # API Status
-        st.subheader("🔗 API Status")
+        st.subheader("API Status")
         if api_key:
             try:
                 test_result = nlp_processor.test_connection()
                 if test_result:
-                    st.success("✅ Gemini API Connected")
+                    st.success("Gemini API Connected")
                 else:
-                    st.error("❌ Gemini API Connection Failed")
+                    st.error("Gemini API Connection Failed")
             except Exception as e:
-                st.error(f"❌ API Error: {str(e)}")
+                st.error(f"API Error: {str(e)}")
         else:
-            st.error("⚠️ GOOGLE_API_KEY not found in .env file")
+            st.error("GOOGLE_API_KEY not found in .env file")
             st.info("Please add your Google AI API key to the .env file")
     
     # Main interface
     if not api_key:
-        st.error("🔑 **API Key Required**: Please add your GOOGLE_API_KEY to the .env file to continue.")
+        st.error("API Key Required: Please add your GOOGLE_API_KEY to the .env file to continue.")
         st.info("Get your API key from: https://makersuite.google.com/app/apikey")
         return
     
     # Check if database has tables
     if not tables:
-        st.warning("🏗️ **Database not initialized**: Please click 'Initialize Sample Database' in the sidebar to start.")
+        st.warning("Database not initialized: Please click 'Initialize Sample Database' in the sidebar to start.")
         return
     
-    st.header("💬 Natural Language Query Interface")
+    st.header("Natural Language Query Interface")
     
     # Example queries
     example_queries = [
@@ -185,22 +185,22 @@ def main():
                                     height=100)
     
     with col2:
-        st.subheader("⚙️ Settings")
+        st.subheader("Settings")
         temperature = st.slider("AI Creativity", 0.0, 1.0, 0.1, 
                                help="Higher values make output more creative")
         max_tokens = st.number_input("Max Response Length", 100, 4000, 1500,
                                    help="Maximum length of AI response")
     
     # Process query button
-    if st.button("🚀 Convert & Execute", type="primary", use_container_width=True):
+    if st.button("Convert & Execute", type="primary", use_container_width=True):
         if not user_query.strip():
             st.error("Please enter a query")
             return
         
-        with st.spinner("🤖 Processing your query with Gemini AI..."):
+        with st.spinner("Processing your query with Gemini AI..."):
             try:
                 # Step 1: Parse natural language query
-                st.subheader("📋 1. Query Analysis")
+                st.subheader("1. Query Analysis")
                 parsed_result = nlp_processor.parse_query(user_query, temperature=temperature)
                 
                 if parsed_result:
@@ -212,11 +212,11 @@ def main():
                         st.metric("Visualization", parsed_result.get('visualization_type', 'Auto'))
                         st.metric("Intent", parsed_result.get('intent', 'Data retrieval')[:30] + "...")
                     
-                    with st.expander("🔍 View Detailed Analysis"):
+                    with st.expander("View Detailed Analysis"):
                         st.json(parsed_result)
                     
                     # Step 2: Generate and execute SQL
-                    st.subheader("💾 2. SQL Generation & Execution")
+                    st.subheader("2. SQL Generation & Execution")
                     sql_query = nlp_processor.generate_sql(user_query, db_manager.get_schema(), 
                                                           max_tokens=max_tokens, temperature=temperature)
                     
@@ -225,14 +225,14 @@ def main():
                         
                         # Explain SQL query
                         explanation = nlp_processor.explain_sql(sql_query)
-                        st.info(f"**Query Explanation:** {explanation}")
+                        st.info(f"Query Explanation: {explanation}")
                         
                         # Execute SQL
                         results_df = db_manager.execute_query(sql_query)
                         
                         if results_df is not None and not results_df.empty:
                             # Step 3: Display results
-                            st.subheader("📊 3. Query Results")
+                            st.subheader("3. Query Results")
                             st.dataframe(results_df, use_container_width=True)
                             
                             # Show summary statistics
@@ -243,13 +243,13 @@ def main():
                                 st.metric("Total Columns", len(results_df.columns))
                             
                             # Step 4: Generate insights
-                            st.subheader("🧠 4. AI Insights")
+                            st.subheader("4. AI Insights")
                             insights = nlp_processor.generate_insights(user_query, results_df)
                             if insights:
-                                st.info(f"💡 **Key Insights:** {insights}")
+                                st.info(f"Key Insights: {insights}")
                             
                             # Step 5: Automatic visualizations
-                            st.subheader("📈 5. Automatic Visualizations")
+                            st.subheader("5. Automatic Visualizations")
                             visualizations = create_automatic_visualizations(results_df)
                             
                             if visualizations:
@@ -259,33 +259,33 @@ def main():
                                 st.info("No suitable visualizations could be generated for this data.")
                             
                             # Suggest follow-up queries
-                            st.subheader("🔄 Suggested Follow-up Queries")
+                            st.subheader("Suggested Follow-up Queries")
                             suggestions = nlp_processor.suggest_follow_up_queries(user_query, results_df)
                             if suggestions:
                                 for suggestion in suggestions:
-                                    if st.button(f"💭 {suggestion}", key=f"suggest_{suggestion[:20]}"):
+                                    if st.button(f"• {suggestion}", key=f"suggest_{suggestion[:20]}"):
                                         st.rerun()
                         
                         else:
-                            st.warning("⚠️ Query executed successfully but returned no results")
+                            st.warning("Query executed successfully but returned no results")
                     else:
-                        st.error("❌ Failed to generate SQL query. Please try rephrasing your question.")
+                        st.error("Failed to generate SQL query. Please try rephrasing your question.")
                         
                     # Since parse_query now always returns a valid result, we don't need this check
                     # The parsing will continue with default values if needed
             
             except Exception as e:
-                st.error(f"❌ Error processing query: {str(e)}")
-                with st.expander("🐛 Debug Information"):
-                    st.write(f"**Error Type:** {type(e).__name__}")
-                    st.write(f"**Error Message:** {str(e)}")
-                    st.write(f"**Model:** gemini-1.5-flash")
-                    st.write(f"**Temperature:** {temperature}")
+                st.error(f"Error processing query: {str(e)}")
+                with st.expander("Debug Information"):
+                    st.write(f"Error Type: {type(e).__name__}")
+                    st.write(f"Error Message: {str(e)}")
+                    st.write(f"Model: gemini-1.5-flash")
+                    st.write(f"Temperature: {temperature}")
 
     # Footer
     st.markdown("---")
-    st.markdown("**🎯 Project Status:** Phase 1 Complete - NLP to SQL Conversion with Automatic Visualizations")
-    st.markdown("**🔧 Technology Stack:** Streamlit • Google Gemini AI • SQLite • Plotly")
+    st.markdown("Project Status: Phase 1 Complete - NLP to SQL Conversion with Automatic Visualizations")
+    st.markdown("Technology Stack: Streamlit • Google Gemini AI • SQLite • Plotly")
 
 if __name__ == "__main__":
     main()

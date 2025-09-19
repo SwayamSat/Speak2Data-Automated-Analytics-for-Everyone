@@ -1,12 +1,12 @@
-# NLP to SQL Converter 🤖
+# NLP to SQL Converter
 
-**Convert natural language queries into SQL and retrieve data with automatic visualizations using Google's Gemini AI**
+Convert natural language queries into SQL and retrieve data with automatic visualizations using Google's Gemini AI
 
-## 📋 Project Status - Phase 1 (60% Complete)
+## Project Status - Phase 1 (60% Complete)
 
-This is the **2nd Monthly Report** version focusing on core NLP-to-SQL functionality:
+This is the 2nd Monthly Report version focusing on core NLP-to-SQL functionality:
 
-✅ **Completed Features:**
+**Completed Features:**
 - Natural language query processing using Google Gemini AI
 - Automatic SQL generation from user queries
 - Database query execution and data retrieval  
@@ -15,13 +15,13 @@ This is the **2nd Monthly Report** version focusing on core NLP-to-SQL functiona
 - Interactive query interface with examples
 - Database management with sample data
 
-🔄 **Future Features (Phase 2):**
+**Future Features (Phase 2):**
 - Machine Learning pipeline integration
 - Predictive analytics and forecasting
 - Advanced visualization options
 - Query optimization suggestions
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Install Dependencies
 ```bash
