@@ -1,0 +1,5 @@
+# Google Gemini API Configuration
+GEMINI_API_KEY=AIzaSyCJHS8OSVPu0hPGNfB210vyxp_8GoOK0NE
+
+# Database Configuration
+DATABASE_URL=sqlite:///business_data.db
