@@ -1,1 +1,88 @@
+# Environment variables and secrets
 .env
+.env.local
+.env.production
+.env.staging
+.env.development
+*.env
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+business_data.db
+
+# Virtual environments
+nlpenv/
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Model files (if any)
+*.pkl
+*.joblib
+*.h5
+*.hdf5
+models/
+
+# Data files (uncomment if you don't want to track data)
+# data/
+# datasets/
+# *.csv
+# *.json
+# *.xlsx
+# *.parquet
