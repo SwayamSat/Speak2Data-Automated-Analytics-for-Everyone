@@ -15,16 +15,26 @@ from typing import List, Dict, Any, Optional
 class DatabaseManager:
     """Manages database operations for the Speak2Data platform."""
     
-    def __init__(self, db_path: str = "business_data.db"):
+    def __init__(self, db_path: str = "business_data.db", custom_db_path: Optional[str] = None):
         """Initialize database manager.
         
         Args:
-            db_path: Path to SQLite database file
+            db_path: Path to default SQLite database file
+            custom_db_path: Path to custom uploaded database file
         """
-        self.db_path = db_path
-        self.engine = create_engine(f"sqlite:///{db_path}")
-        self._create_tables()
-        self._populate_sample_data()
+        if custom_db_path:
+            self.db_path = custom_db_path
+            self.is_custom_db = True
+        else:
+            self.db_path = db_path
+            self.is_custom_db = False
+            
+        self.engine = create_engine(f"sqlite:///{self.db_path}")
+        
+        # Only create tables and populate data for default database
+        if not self.is_custom_db:
+            self._create_tables()
+            self._populate_sample_data()
     
     def _create_tables(self):
         """Create database tables for business data."""
@@ -260,16 +270,116 @@ class DatabaseManager:
             DataFrame with query results
         """
         try:
+            # Validate input
+            if not query or not query.strip():
+                raise Exception("Empty query provided")
+            
             # Clean up the query - remove semicolons and extra whitespace
             clean_query = query.strip().rstrip(';')
             
+            # Basic validation - check if query looks valid
+            if not clean_query.upper().startswith(('SELECT', 'WITH', 'PRAGMA')):
+                raise Exception(f"Invalid query type. Only SELECT queries are supported. Got: {clean_query[:20]}...")
+            
+            # Validate query against schema before execution (non-blocking)
+            validation_error = self._validate_query_against_schema(clean_query)
+            if validation_error:
+                # Log validation error but allow execution attempt
+                print(f"Query validation warning: {validation_error}")
+            
             with self.engine.connect() as conn:
-                result = conn.execute(text(clean_query))
-                columns = result.keys()
-                data = result.fetchall()
-                return pd.DataFrame(data, columns=columns)
+                try:
+                    result = conn.execute(text(clean_query))
+                    columns = result.keys()
+                    data = result.fetchall()
+                    
+                    # Check if we got any results
+                    if not columns:
+                        raise Exception("Query returned no columns")
+                    
+                    return pd.DataFrame(data, columns=columns)
+                    
+                except Exception as db_err:
+                    # Re-raise with better error message
+                    error_msg = str(db_err)
+                    
+                    # Provide more helpful error messages
+                    if "no such column" in error_msg.lower():
+                        schema = self.get_table_schema()
+                        # Find the problematic column by analyzing the query
+                        problematic_table = None
+                        for table, cols in schema.items():
+                            if table.lower() in clean_query.lower():
+                                problematic_table = table
+                                break
+                        
+                        if problematic_table:
+                            available_cols = schema[problematic_table]
+                            raise Exception(
+                                f"Column doesn't exist in table '{problematic_table}'. "
+                                f"Available columns: {', '.join(available_cols)}. "
+                                f"Please check your question."
+                            )
+                        else:
+                            raise Exception(
+                                f"Column doesn't exist. Available tables: {', '.join(list(schema.keys()))}. "
+                                f"Please check your question."
+                            )
+                    elif "no such table" in error_msg.lower():
+                        schema = self.get_table_schema()
+                        available_tables = list(schema.keys())
+                        raise Exception(
+                            f"Table doesn't exist. Available tables: {', '.join(available_tables)}. "
+                            f"Please check your question."
+                        )
+                    else:
+                        raise Exception(f"Database Error: {error_msg}")
+                        
         except Exception as e:
-            raise Exception(f"Database query failed: {str(e)}")
+            # Re-raise with clearer message
+            raise e
+    
+    def _validate_query_against_schema(self, query: str) -> Optional[str]:
+        """Validate SQL query against database schema.
+        
+        Args:
+            query: SQL query string
+            
+        Returns:
+            Error message if validation fails, None otherwise
+        """
+        try:
+            import re
+            schema = self.get_table_schema()
+            available_tables = list(schema.keys())
+            
+            # Extract table names from query
+            query_upper = query.upper()
+            
+            # Find tables in FROM clause
+            from_match = re.search(r'FROM\s+(\w+)', query_upper)
+            tables_in_query = []
+            if from_match:
+                table_name = from_match.group(1).lower()
+                tables_in_query.append(table_name)
+            
+            # Find tables in JOIN clauses
+            join_matches = re.findall(r'JOIN\s+(\w+)', query_upper)
+            tables_in_query.extend([t.lower() for t in join_matches])
+            
+            # Check if all tables exist
+            for table in tables_in_query:
+                if table not in [t.lower() for t in available_tables]:
+                    return f"The requested table '{table}' doesn't exist in the database. Available tables: {', '.join(available_tables)}"
+            
+            # Extract column names (basic check)
+            # This is a simplified validation - we check if columns from the schema are used
+            # We can't easily validate all columns without parsing the full SQL
+            return None
+            
+        except Exception:
+            # If validation fails, don't block the query - let the database handle it
+            return None
     
     def get_table_schema(self) -> Dict[str, List[str]]:
         """Get schema information for all tables.
@@ -279,12 +389,37 @@ class DatabaseManager:
         """
         schema = {}
         with self.engine.connect() as conn:
-            tables = ['customers', 'products', 'orders', 'order_items', 'sales']
+            if self.is_custom_db:
+                # For custom databases, discover all tables dynamically
+                result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+                tables = [row[0] for row in result.fetchall()]
+            else:
+                # For default database, use known tables
+                tables = ['customers', 'products', 'orders', 'order_items', 'sales']
+            
             for table in tables:
-                result = conn.execute(text(f"PRAGMA table_info({table})"))
-                columns = [row[1] for row in result.fetchall()]
-                schema[table] = columns
+                try:
+                    result = conn.execute(text(f"PRAGMA table_info({table})"))
+                    columns = [row[1] for row in result.fetchall()]
+                    if columns:  # Only add tables that exist and have columns
+                        schema[table] = columns
+                except Exception:
+                    # Skip tables that can't be accessed
+                    continue
         return schema
+    
+    def get_database_info(self) -> Dict[str, Any]:
+        """Get database information.
+        
+        Returns:
+            Dictionary with database information
+        """
+        info = {
+            'is_custom': self.is_custom_db,
+            'path': self.db_path,
+            'tables': list(self.get_table_schema().keys())
+        }
+        return info
     
     def get_sample_queries(self) -> List[str]:
         """Get sample queries for demonstration.

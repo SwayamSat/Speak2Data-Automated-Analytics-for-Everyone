@@ -7,6 +7,12 @@ import re
 from typing import Dict, List, Any, Optional
 from nlp_module import NLPProcessor
 
+# Import SQL validator if available
+try:
+    from sql_validator import SQLValidator
+except ImportError:
+    SQLValidator = None
+
 
 class SQLGenerator:
     """Generates SQL queries from parsed natural language queries."""
@@ -38,6 +44,16 @@ class SQLGenerator:
             
             # Validate and optimize the query
             optimized_query = self._optimize_query(sql_query, parsed_query)
+            
+            # Validate and fix query against actual schema
+            if SQLValidator:
+                validator = SQLValidator(self.schema_info)
+                fixed_query, validation_error = validator.validate_and_fix_query(optimized_query)
+                if validation_error:
+                    # Try to use fixed query even if there's a validation error
+                    optimized_query = fixed_query
+                else:
+                    optimized_query = fixed_query
             
             return {
                 "original_query": user_query,
@@ -106,24 +122,54 @@ class SQLGenerator:
         # Fix implicit joins
         query = sql_query
         
-        # Common table relationships
-        table_relationships = {
-            ("orders", "customers"): "orders.customer_id = customers.customer_id",
-            ("order_items", "orders"): "order_items.order_id = orders.order_id",
-            ("order_items", "products"): "order_items.product_id = products.product_id",
-            ("sales", "products"): "sales.product_id = products.product_id",
-            ("sales", "customers"): "sales.customer_id = customers.customer_id"
-        }
+        # Build table relationships dynamically based on schema
+        table_relationships = {}
+        tables = self.schema_info.get("tables", {})
+        
+        # Look for common foreign key patterns (table_id columns)
+        for table_name, columns in tables.items():
+            for other_table_name, other_columns in tables.items():
+                if table_name != other_table_name:
+                    # Check for common FK patterns
+                    fk_patterns = [
+                        (f"{other_table_name}_id", f"{table_name}.{other_table_name}_id = {other_table_name}.{other_table_name.split('_')[0]}_id"),
+                        (f"{other_table_name.split('_')[0]}_id", f"{table_name}.{other_table_name.split('_')[0]}_id = {other_table_name}.{other_table_name.split('_')[0]}_id"),
+                        (f"{table_name}_id", f"{table_name}.{table_name}_id = {other_table_name}.{table_name}_id"),
+                    ]
+                    
+                    for fk_col, join_condition in fk_patterns:
+                        if fk_col in columns:
+                            key = (table_name, other_table_name)
+                            if key not in table_relationships:
+                                table_relationships[key] = join_condition
+                            break
+        
+        # Also check for common patterns like customer_id, product_id, etc.
+        common_ids = ['customer_id', 'product_id', 'order_id', 'patient_id', 'doctor_id', 'account_id', 'loan_id', 'appointment_id', 'transaction_id']
+        for table_name, columns in tables.items():
+            for other_table_name, other_columns in tables.items():
+                if table_name != other_table_name:
+                    for common_id in common_ids:
+                        if common_id in columns and common_id in other_columns:
+                            key = (table_name, other_table_name)
+                            if key not in table_relationships:
+                                # Try to find the primary key pattern
+                                pk_col = f"{other_table_name.split('_')[0]}_id" if other_table_name.endswith('s') else f"{other_table_name}_id"
+                                if pk_col in other_columns or any(c.endswith('_id') for c in other_columns):
+                                    join_condition = f"{table_name}.{common_id} = {other_table_name}.{common_id}"
+                                    table_relationships[key] = join_condition
+                                    break
         
         # Check if query has multiple tables but no explicit JOINs
         tables_in_query = []
-        for table in self.schema_info["tables"].keys():
-            if table in query.lower():
+        for table in tables.keys():
+            if table.lower() in query.lower():
                 tables_in_query.append(table)
         
         if len(tables_in_query) > 1 and 'JOIN' not in query.upper():
-            # Add explicit JOINs
-            query = self._add_explicit_joins(query, tables_in_query, table_relationships)
+            # Add explicit JOINs if relationships found
+            if table_relationships:
+                query = self._add_explicit_joins(query, tables_in_query, table_relationships)
         
         return query
     
