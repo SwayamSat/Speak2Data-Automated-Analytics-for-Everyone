@@ -7,6 +7,8 @@ import google.generativeai as genai
 import json
 import os
 import pandas as pd
+import time
+import re
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 import warnings
@@ -105,6 +107,67 @@ class NLPProcessor:
                     "sales": ["sale_id", "product_id", "customer_id", "sale_date", "quantity", "unit_price", "total_amount", "region", "sales_rep"]
                 }
             }
+    
+    def _extract_json_from_response(self, response_text: str) -> dict:
+        """Extract JSON from API response, handling various formats.
+        
+        Args:
+            response_text: Raw response text from API
+            
+        Returns:
+            Parsed JSON dictionary
+            
+        Raises:
+            json.JSONDecodeError: If JSON cannot be extracted
+        """
+        import re
+        
+        # Remove markdown code blocks
+        text = response_text.strip()
+        
+        # Pattern 1: ```json ... ```
+        if text.startswith('```json'):
+            text = text[7:]
+        elif text.startswith('```'):
+            text = text[3:]
+        
+        if text.endswith('```'):
+            text = text[:-3]
+        
+        text = text.strip()
+        
+        # Pattern 2: Find JSON object using regex
+        json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+        matches = re.findall(json_pattern, text, re.DOTALL)
+        
+        # Try parsing each potential JSON match
+        for match in matches:
+            try:
+                return json.loads(match)
+            except json.JSONDecodeError:
+                continue
+        
+        # Pattern 3: Try direct parsing
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        
+        # Pattern 4: Look for JSON between specific markers
+        json_start = text.find('{')
+        json_end = text.rfind('}') + 1
+        
+        if json_start >= 0 and json_end > json_start:
+            try:
+                return json.loads(text[json_start:json_end])
+            except json.JSONDecodeError:
+                pass
+        
+        # If all else fails, raise error with helpful message
+        raise json.JSONDecodeError(
+            f"Could not extract valid JSON from response. First 200 chars: {text[:200]}",
+            text, 0
+        )
     
     def _try_generate_content(self, prompt: str, max_retries: int = 3) -> Any:
         """Try to generate content, with rate limiting and model fallback on error.
@@ -294,24 +357,31 @@ class NLPProcessor:
         
         try:
             response = self._try_generate_content(prompt)
-            # Extract JSON from response
             response_text = response.text.strip()
             
-            # Clean up the response to extract JSON
-            if response_text.startswith('```json'):
-                response_text = response_text[7:]
-            if response_text.endswith('```'):
-                response_text = response_text[:-3]
+            # Use robust JSON extraction
+            try:
+                parsed_result = self._extract_json_from_response(response_text)
+                
+                # Validate the parsed result has required fields
+                required_fields = ['intent', 'entities', 'task_type']
+                if all(field in parsed_result for field in required_fields):
+                    return parsed_result
+                else:
+                    print(f"Warning: API response missing required fields. Using fallback.")
+                    return self._fallback_parse(user_query)
+                    
+            except json.JSONDecodeError as e:
+                print(f"Warning: Could not parse JSON from API response: {str(e)[:100]}")
+                return self._fallback_parse(user_query)
             
-            parsed_result = json.loads(response_text)
-            return parsed_result
-            
-        except json.JSONDecodeError as e:
-            # Fallback parsing if JSON is malformed
-            return self._fallback_parse(user_query)
         except Exception as e:
-            # If API fails, use fallback
-            print(f"Warning: Gemini API error: {str(e)}")
+            error_str = str(e).lower()
+            # Check for quota errors
+            if '429' in str(e) or 'quota' in error_str or 'rate limit' in error_str:
+                print(f"⚠️ API quota exceeded. Using fallback parser.")
+            else:
+                print(f"Warning: Gemini API error: {str(e)[:100]}")
             return self._fallback_parse(user_query)
     
     def _fallback_parse(self, user_query: str) -> Dict[str, Any]:
@@ -459,29 +529,12 @@ class NLPProcessor:
             sql_query = response.text.strip()
             
             # Clean up the SQL query - remove markdown formatting
-            if sql_query.startswith('```sql'):
-                sql_query = sql_query[6:]
-            elif sql_query.startswith('```'):
-                sql_query = sql_query[3:]
-            if sql_query.endswith('```'):
-                sql_query = sql_query[:-3]
+            sql_query = self._clean_sql_response(sql_query)
             
-            # Remove any explanatory text before or after SQL
-            # Look for SQL keywords to find where the actual query starts
-            sql_keywords = ['SELECT', 'WITH']
-            query_start = -1
-            for keyword in sql_keywords:
-                idx = sql_query.upper().find(keyword)
-                if idx != -1:
-                    if query_start == -1 or idx < query_start:
-                        query_start = idx
-            
-            if query_start > 0:
-                sql_query = sql_query[query_start:]
-            
-            # Remove trailing text after semicolon
-            if ';' in sql_query:
-                sql_query = sql_query[:sql_query.index(';') + 1]
+            # Validate SQL query
+            if not self._is_valid_sql(sql_query):
+                print(f"Warning: Generated SQL appears invalid. Using fallback.")
+                return self._generate_simple_sql(parsed_query)
             
             return sql_query.strip()
             
@@ -489,6 +542,96 @@ class NLPProcessor:
             # Fallback to simple SQL generation
             print(f"Warning: Gemini API error in SQL generation: {str(e)}")
             return self._generate_simple_sql(parsed_query)
+    
+    def _clean_sql_response(self, sql_text: str) -> str:
+        """Clean SQL response by removing markdown and explanatory text.
+        
+        Args:
+            sql_text: Raw SQL text from API
+            
+        Returns:
+            Cleaned SQL query
+        """
+        import re
+        
+        # Remove markdown code blocks
+        if sql_text.startswith('```sql'):
+            sql_text = sql_text[6:]
+        elif sql_text.startswith('```'):
+            sql_text = sql_text[3:]
+        if sql_text.endswith('```'):
+            sql_text = sql_text[:-3]
+        
+        sql_text = sql_text.strip()
+        
+        # Find SQL query start - look for SELECT, WITH, INSERT, UPDATE, DELETE
+        sql_keywords = ['SELECT', 'WITH', 'INSERT', 'UPDATE', 'DELETE']
+        query_start = -1
+        for keyword in sql_keywords:
+            pattern = r'\b' + keyword + r'\b'
+            match = re.search(pattern, sql_text, re.IGNORECASE)
+            if match:
+                if query_start == -1 or match.start() < query_start:
+                    query_start = match.start()
+        
+        if query_start > 0:
+            sql_text = sql_text[query_start:]
+        
+        # Remove trailing explanatory text after semicolon
+        if ';' in sql_text:
+            # Find first semicolon that's likely the end of query
+            semicolon_idx = sql_text.index(';')
+            sql_text = sql_text[:semicolon_idx + 1]
+        
+        # Remove common explanatory prefixes
+        prefixes_to_remove = [
+            'Here is the SQL query:',
+            'Here\'s the query:',
+            'SQL query:',
+            'Query:',
+            'The SQL is:'
+        ]
+        
+        for prefix in prefixes_to_remove:
+            if sql_text.lower().startswith(prefix.lower()):
+                sql_text = sql_text[len(prefix):].strip()
+        
+        return sql_text.strip()
+    
+    def _is_valid_sql(self, sql_query: str) -> bool:
+        """Basic validation to check if SQL query looks valid.
+        
+        Args:
+            sql_query: SQL query to validate
+            
+        Returns:
+            True if query appears valid, False otherwise
+        """
+        if not sql_query:
+            return False
+        
+        sql_upper = sql_query.upper().strip()
+        
+        # Must start with a valid SQL keyword
+        valid_starts = ['SELECT', 'WITH', 'INSERT', 'UPDATE', 'DELETE']
+        if not any(sql_upper.startswith(keyword) for keyword in valid_starts):
+            return False
+        
+        # Must have FROM clause for SELECT
+        if sql_upper.startswith('SELECT') and 'FROM' not in sql_upper:
+            return False
+        
+        # Check for balanced parentheses
+        if sql_query.count('(') != sql_query.count(')'):
+            return False
+        
+        # Basic check for SQL injection patterns (shouldn't happen with AI, but safety first)
+        dangerous_patterns = ['DROP TABLE', 'DELETE FROM', 'TRUNCATE', 'ALTER TABLE']
+        for pattern in dangerous_patterns:
+            if pattern in sql_upper:
+                return False
+        
+        return True
     
     def _generate_simple_sql(self, parsed_query: Dict[str, Any]) -> str:
         """Generate simple SQL query as fallback using actual schema.
@@ -645,9 +788,21 @@ class NLPProcessor:
         
         try:
             response = self._try_generate_content(prompt)
-            return response.text.strip()
+            explanation_text = response.text.strip()
+            
+            # Clean up the explanation (remove markdown formatting if any)
+            explanation_text = explanation_text.strip('`').strip()
+            
+            # Ensure explanation is not too long
+            if len(explanation_text) > 1000:
+                explanation_text = explanation_text[:1000] + "..."
+            
+            return explanation_text
+            
         except Exception as e:
-            print(f"API Error in explanation: {str(e)}")
+            error_str = str(e).lower()
+            if '429' not in str(e) and 'quota' not in error_str:
+                print(f"API Error in explanation: {str(e)[:100]}")
             # Generate a comprehensive fallback explanation
             if len(results) > 0:
                 numeric_cols = [col for col in results.columns if pd.api.types.is_numeric_dtype(results[col])]
@@ -738,6 +893,81 @@ class NLPProcessor:
             ])
             
             return questions[:5]  # Return up to 5 questions
+    
+    def generate_custom_query(self, user_intent: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Generate a custom query response based on user intent with context.
+        
+        Args:
+            user_intent: User's natural language question or request
+            context: Optional context including schema, previous results, etc.
+            
+        Returns:
+            Dictionary containing query details, suggestions, and insights
+        """
+        try:
+            # Build context information
+            context_text = ""
+            if context:
+                if 'schema' in context:
+                    schema_details = []
+                    for table, cols in context['schema'].items():
+                        schema_details.append(f"Table '{table}': {', '.join(cols[:10])}")
+                    context_text += "\nDatabase Schema:\n" + "\n".join(schema_details)
+                
+                if 'previous_query' in context:
+                    context_text += f"\n\nPrevious Query: {context['previous_query']}"
+                
+                if 'data_summary' in context:
+                    context_text += f"\n\nData Summary: {context['data_summary']}"
+            
+            prompt = f"""
+            You are an expert data analyst assistant. Analyze the user's request and provide comprehensive guidance.
+            
+            User Request: "{user_intent}"
+            {context_text}
+            
+            Provide a JSON response with:
+            {{
+                "understanding": "Brief interpretation of what the user wants",
+                "query_type": "data_retrieval|analysis|prediction|visualization|comparison",
+                "suggested_approach": "Step-by-step approach to answer the question",
+                "key_insights": ["List of key insights or considerations"],
+                "sql_hint": "Hint about the SQL query structure (if applicable)",
+                "visualization_suggestions": ["Suggested chart types"],
+                "follow_up_questions": ["3-5 related questions to explore further"]
+            }}
+            
+            Return only valid JSON, no additional text.
+            """
+            
+            response = self._try_generate_content(prompt)
+            result = self._extract_json_from_response(response.text)
+            
+            return result
+            
+        except Exception as e:
+            error_str = str(e).lower()
+            if '429' not in str(e) and 'quota' not in error_str:
+                print(f"Warning: Custom query generation error: {str(e)[:100]}")
+            
+            # Fallback response
+            return {
+                "understanding": f"Analyzing: {user_intent}",
+                "query_type": "data_retrieval",
+                "suggested_approach": "1. Identify relevant tables\n2. Select appropriate columns\n3. Apply filters if needed\n4. Visualize results",
+                "key_insights": [
+                    "Focus on the most relevant data points",
+                    "Consider time-based trends if applicable",
+                    "Look for patterns and outliers"
+                ],
+                "sql_hint": "Use SELECT with appropriate WHERE and GROUP BY clauses",
+                "visualization_suggestions": ["bar chart", "line chart", "table"],
+                "follow_up_questions": [
+                    "What are the trends over time?",
+                    "How do different categories compare?",
+                    "What are the top performing items?"
+                ]
+            }
     
     def generate_query_suggestions(self, schema: Dict[str, List[str]], num_suggestions: int = 6) -> List[str]:
         """Generate AI-based query suggestions based on database schema using Gemini API.
@@ -838,57 +1068,97 @@ class NLPProcessor:
                 return self._generate_fallback_suggestions(schema, num_suggestions)
     
     def _generate_fallback_suggestions(self, schema: Dict[str, List[str]], num_suggestions: int = 6) -> List[str]:
-        """Generate fallback query suggestions based on schema analysis.
+        """Generate intelligent query suggestions based on schema analysis.
         
         Args:
             schema: Dictionary mapping table names to their column lists
             num_suggestions: Number of suggestions to generate
             
         Returns:
-            List of suggested queries
+            List of suggested queries customized to the database schema
         """
         suggestions = []
-        
-        # Analyze schema to generate relevant suggestions
         tables = list(schema.keys())
         
-        for table in tables[:3]:  # Use first 3 tables
+        if not tables:
+            return ["Show me all available data"]
+        
+        # Analyze each table's columns to understand data structure
+        for table in tables:
             columns = schema[table]
             
-            # Find numeric columns
-            numeric_cols = [col for col in columns if any(term in col.lower() for term in ['amount', 'price', 'cost', 'quantity', 'total', 'count', 'id'])]
+            # Categorize columns by type
+            numeric_cols = [col for col in columns if any(term in col.lower() 
+                for term in ['amount', 'price', 'cost', 'value', 'quantity', 'total', 'revenue', 'sales', 'profit', 'count', 'number', 'sum', 'avg'])]
             
-            # Find categorical columns
-            categorical_cols = [col for col in columns if any(term in col.lower() for term in ['category', 'type', 'status', 'segment', 'name', 'city', 'state', 'region'])]
+            categorical_cols = [col for col in columns if any(term in col.lower() 
+                for term in ['category', 'type', 'status', 'segment', 'class', 'group', 'name', 'title', 'city', 'state', 'region', 'country', 'department', 'division'])]
             
-            # Find date columns
-            date_cols = [col for col in columns if 'date' in col.lower() or 'time' in col.lower()]
+            date_cols = [col for col in columns if any(term in col.lower() 
+                for term in ['date', 'time', 'year', 'month', 'day', 'timestamp', 'created', 'updated', 'modified'])]
             
-            # Generate suggestions based on column types
+            id_cols = [col for col in columns if col.lower().endswith('_id') or col.lower() == 'id' or 'identifier' in col.lower()]
+            
+            # Priority 1: Aggregation queries (most common business questions)
             if numeric_cols and categorical_cols:
-                suggestions.append(f"Show me the total {numeric_cols[0]} by {categorical_cols[0]}")
+                # Use first numeric and categorical for main suggestion
+                suggestions.append(f"Show total {numeric_cols[0]} by {categorical_cols[0]} in {table}")
+                if len(categorical_cols) > 1:
+                    suggestions.append(f"Compare {numeric_cols[0]} across {categorical_cols[0]} and {categorical_cols[1]} in {table}")
             
-            if categorical_cols and len(categorical_cols) > 1:
-                suggestions.append(f"What are the top 10 items by {categorical_cols[0]}?")
+            # Priority 2: Top N queries
+            if categorical_cols:
+                suggestions.append(f"What are the top 10 {categorical_cols[0]} in {table}?")
+            elif numeric_cols:
+                suggestions.append(f"Show top 10 records by {numeric_cols[0]} in {table}")
             
+            # Priority 3: Time-based analysis
             if date_cols and numeric_cols:
-                suggestions.append(f"Show me {numeric_cols[0]} trends over time")
+                suggestions.append(f"Show {numeric_cols[0]} trends over {date_cols[0]} in {table}")
+            elif date_cols and categorical_cols:
+                suggestions.append(f"Show {categorical_cols[0]} distribution over {date_cols[0]} in {table}")
             
-            if len(tables) > 1:
-                suggestions.append(f"Compare data across {', '.join(tables[:2])}")
-            
+            # Priority 4: Averages and statistics
             if numeric_cols:
-                suggestions.append(f"What is the average {numeric_cols[0]}?")
+                if len(numeric_cols) > 1:
+                    suggestions.append(f"Compare average {numeric_cols[0]} vs {numeric_cols[1]} in {table}")
+                else:
+                    suggestions.append(f"What is the average {numeric_cols[0]} in {table}?")
             
-            suggestions.append(f"Analyze {table} data patterns")
+            # Priority 5: Count and distribution
+            if categorical_cols:
+                suggestions.append(f"How many records per {categorical_cols[0]} in {table}?")
+            
+            # Priority 6: Data overview
+            suggestions.append(f"Show me all data from {table} table")
+            
+            # Stop after generating enough suggestions
+            if len(suggestions) >= num_suggestions * 2:  # Generate extras to filter best ones
+                break
         
-        # Ensure we have enough suggestions
-        if len(suggestions) < num_suggestions:
-            suggestions.extend([
-                "What are the top performing items?",
-                "Show me data breakdown by category",
-                "What trends can you identify?",
-                "Compare performance across different segments"
-            ])
+        # Priority 7: Multi-table queries if multiple tables exist
+        if len(tables) > 1:
+            # Look for potential relationships
+            for i, table1 in enumerate(tables[:2]):
+                for table2 in tables[i+1:3]:
+                    # Check if tables might be related (common ID patterns)
+                    cols1 = set(col.lower() for col in schema[table1])
+                    cols2 = set(col.lower() for col in schema[table2])
+                    
+                    # Find common column names (potential join keys)
+                    common = cols1.intersection(cols2)
+                    if common or any(table2.lower().rstrip('s') in col for col in cols1) or any(table1.lower().rstrip('s') in col for col in cols2):
+                        suggestions.append(f"Show data from {table1} and {table2} together")
+                        break
         
-        return suggestions[:num_suggestions]
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_suggestions = []
+        for s in suggestions:
+            s_lower = s.lower()
+            if s_lower not in seen:
+                seen.add(s_lower)
+                unique_suggestions.append(s)
+        
+        # Return the most diverse and useful suggestions
+        return unique_suggestions[:num_suggestions]

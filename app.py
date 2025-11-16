@@ -1496,75 +1496,89 @@ def process_query(user_query: str):
         st.error(f"Processing Error: {str(e)}")
 
 def _generate_basic_suggestions(schema: Dict[str, List[str]]) -> List[str]:
-    """Generate basic query suggestions based on database schema.
+    """Generate intelligent query suggestions customized to database schema.
     
     Args:
         schema: Dictionary mapping table names to their column lists
         
     Returns:
-        List of suggested natural language queries
+        List of suggested natural language queries tailored to actual data structure
     """
     suggestions = []
     tables = list(schema.keys())
     
     if not tables:
         return [
-            "Show me all data",
-            "What are the top items?",
-            "Show me data breakdown by category",
-            "What trends can you identify?",
-            "Compare performance across different segments",
-            "Analyze data patterns"
+            "Show me all available data",
+            "What tables exist in this database?",
+            "Display summary statistics"
         ]
     
-    # Get first few tables
-    for table in tables[:3]:
+    # Analyze each table for intelligent suggestions
+    for table in tables:
         columns = schema[table]
         
-        # Find numeric columns
+        # Categorize columns by type with expanded patterns
         numeric_cols = [col for col in columns if any(term in col.lower() for term in 
-            ['amount', 'price', 'cost', 'quantity', 'total', 'count', 'value', 'revenue', 'sales'])]
+            ['amount', 'price', 'cost', 'value', 'quantity', 'total', 'revenue', 'sales', 'profit', 'count', 'number', 'sum', 'avg'])]
         
-        # Find categorical columns
         categorical_cols = [col for col in columns if any(term in col.lower() for term in 
-            ['category', 'type', 'status', 'segment', 'name', 'city', 'state', 'region', 'class'])]
+            ['category', 'type', 'status', 'segment', 'class', 'group', 'name', 'title', 'city', 'state', 'region', 'country', 'department'])]
         
-        # Find date columns
-        date_cols = [col for col in columns if 'date' in col.lower() or 'time' in col.lower()]
+        date_cols = [col for col in columns if any(term in col.lower() for term in 
+            ['date', 'time', 'year', 'month', 'day', 'timestamp', 'created', 'updated'])]
         
-        # Generate suggestions based on columns found
+        # Generate smart suggestions based on available column types
+        
+        # Aggregation queries (highest priority - most useful)
         if numeric_cols and categorical_cols:
-            suggestions.append(f"Show me the total {numeric_cols[0]} by {categorical_cols[0]}")
-            suggestions.append(f"What are the top 10 items by {numeric_cols[0]}?")
+            suggestions.append(f"Show total {numeric_cols[0]} by {categorical_cols[0]} in {table}")
+            if len(categorical_cols) > 1:
+                suggestions.append(f"Compare {numeric_cols[0]} across {categorical_cols[0]} and {categorical_cols[1]} in {table}")
         
-        if categorical_cols and len(categorical_cols) > 1:
-            suggestions.append(f"Show me breakdown by {categorical_cols[0]}")
+        # Top N queries (very common business question)
+        if categorical_cols:
+            suggestions.append(f"What are the top 10 {categorical_cols[0]} in {table}?")
+        elif numeric_cols:
+            suggestions.append(f"Show top 10 records by {numeric_cols[0]} in {table}")
         
+        # Time-based analysis
         if date_cols and numeric_cols:
-            suggestions.append(f"Show me {numeric_cols[0]} trends over time")
+            suggestions.append(f"Show {numeric_cols[0]} trends over {date_cols[0]} in {table}")
+        elif date_cols and categorical_cols:
+            suggestions.append(f"Show {categorical_cols[0]} distribution over {date_cols[0]} in {table}")
         
+        # Statistical queries
         if numeric_cols:
-            suggestions.append(f"What is the average {numeric_cols[0]}?")
+            suggestions.append(f"What is the average {numeric_cols[0]} in {table}?")
+            if len(numeric_cols) > 1:
+                suggestions.append(f"Compare {numeric_cols[0]} vs {numeric_cols[1]} in {table}")
         
-        if len(tables) > 1:
-            suggestions.append(f"Compare data across {', '.join(tables[:2])}")
+        # Count/distribution queries
+        if categorical_cols:
+            suggestions.append(f"How many records per {categorical_cols[0]} in {table}?")
+        
+        # Data overview
+        suggestions.append(f"Show me all data from {table} table")
+        
+        # Stop after generating enough suggestions
+        if len(suggestions) >= 12:  # Generate extras to pick best ones
+            break
     
-    # Fill remaining slots with generic suggestions
-    generic_suggestions = [
-        "What are the top performing items?",
-        "Show me data breakdown by category",
-        "What trends can you identify?",
-        "Compare performance across different segments",
-        "Analyze data patterns",
-        "What predictions can we make?"
-    ]
+    # Multi-table queries if multiple tables
+    if len(tables) > 1:
+        suggestions.append(f"Show data from {tables[0]} and {tables[1]} together")
     
-    # Add generic suggestions to fill up to 6 total
-    for gen_sug in generic_suggestions:
-        if gen_sug not in suggestions and len(suggestions) < 6:
-            suggestions.append(gen_sug)
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_suggestions = []
+    for s in suggestions:
+        s_lower = s.lower()
+        if s_lower not in seen:
+            seen.add(s_lower)
+            unique_suggestions.append(s)
     
-    return suggestions[:6]
+    return unique_suggestions[:6]
 
 def main():
     """Main application function."""
@@ -1646,13 +1660,11 @@ def main():
         )
     
     # Process query button
-    col1, col2, col3 = st.columns([1, 1, 3])
-    with col1:
-        if st.button("Analyze", type="primary", use_container_width=True):
-            if user_query.strip():
-                process_query(user_query.strip())
-            else:
-                st.warning("Please enter a question to analyze.")
+    if st.button("🔍 Analyze Query", type="primary", use_container_width=True):
+        if user_query.strip():
+            process_query(user_query.strip())
+        else:
+            st.warning("Please enter a question to analyze.")
     
     # Display current results if available
     if st.session_state.current_results is not None:
@@ -1708,35 +1720,68 @@ def main():
             st.warning(f"Could not generate visualizations: {str(e)}")
         
         # Generate explanation
-        st.subheader("Analysis Explanation")
+        st.subheader("🤖 AI-Powered Analysis")
         try:
             # Get the actual user query from session state or use a default
             user_query = st.session_state.get('last_query', 'data analysis')
-            explanation = st.session_state.nlp_processor.explain_results(
-                user_query, results_df, "sql"
+            
+            with st.spinner("Generating insights..."):
+                explanation = st.session_state.nlp_processor.explain_results(
+                    user_query, results_df, "sql"
+                )
+            
+            # Display explanation in a nice card
+            st.markdown(
+                f"""
+                <div style="background-color: #f0f8ff; padding: 20px; border-radius: 10px; border-left: 5px solid #1f77b4;">
+                    {explanation}
+                </div>
+                """,
+                unsafe_allow_html=True
             )
-            st.write(explanation)
         except Exception as e:
-            st.warning(f"Could not generate explanation: {str(e)}")
+            error_str = str(e).lower()
+            if '429' in str(e) or 'quota' in error_str:
+                st.info("⚠️ API quota limit reached. Using basic analysis.")
+            else:
+                st.warning(f"Could not generate AI explanation: {str(e)[:100]}")
             # Provide a basic explanation as fallback
             st.write(generate_basic_explanation(results_df))
         
         # Suggest follow-up questions
-        st.subheader("Suggested Follow-up Questions")
+        st.subheader("💭 Explore Further")
         try:
-            follow_up_questions = st.session_state.nlp_processor.suggest_follow_up_questions(
-                "User query", results_df
-            )
+            user_query = st.session_state.get('last_query', 'data analysis')
             
-            cols = st.columns(min(3, len(follow_up_questions)))
-            for i, question in enumerate(follow_up_questions):
-                col_idx = i % len(cols)
-                with cols[col_idx]:
-                    if st.button(question, key=f"followup_{i}", use_container_width=True):
-                        st.session_state.sample_query = question
-                        st.rerun()
+            with st.spinner("Generating suggestions..."):
+                follow_up_questions = st.session_state.nlp_processor.suggest_follow_up_questions(
+                    user_query, results_df
+                )
+            
+            if follow_up_questions:
+                st.markdown("**Click any question below to explore:**")
+                
+                # Display as clickable pills/buttons
+                cols = st.columns(min(3, len(follow_up_questions)))
+                for i, question in enumerate(follow_up_questions):
+                    col_idx = i % len(cols)
+                    with cols[col_idx]:
+                        # Create a cleaner button appearance
+                        if st.button(
+                            f"❓ {question}", 
+                            key=f"followup_{i}", 
+                            use_container_width=True,
+                            help="Click to ask this question"
+                        ):
+                            st.session_state.sample_query = question
+                            st.rerun()
+            else:
+                st.info("No follow-up questions available.")
+                
         except Exception as e:
-            st.warning(f"Could not generate follow-up questions: {str(e)}")
+            error_str = str(e).lower()
+            if '429' not in str(e) and 'quota' not in error_str:
+                st.warning(f"Could not generate follow-up questions: {str(e)[:100]}")
         
         # ML Analysis section
         if len(results_df) > 10:  # Only show ML options for larger datasets
