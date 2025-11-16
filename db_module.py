@@ -1,43 +1,162 @@
 """
 Database module for Speak2Data platform.
-Handles SQLite database setup, sample data generation, and query execution.
+Handles multiple database types (SQLite, PostgreSQL, MySQL, etc.) with universal schema discovery and query execution.
 """
 
 import sqlite3
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, inspect, MetaData
+from sqlalchemy.exc import SQLAlchemyError
 import os
-from typing import List, Dict, Any, Optional
+import tempfile
+from typing import List, Dict, Any, Optional, Union
+import re
+from urllib.parse import urlparse
+from pathlib import Path
 
 
 class DatabaseManager:
-    """Manages database operations for the Speak2Data platform."""
+    """Manages database operations for multiple database types."""
     
-    def __init__(self, db_path: str = "business_data.db", custom_db_path: Optional[str] = None):
+    SUPPORTED_DB_TYPES = {
+        'sqlite': ['sqlite', 'sqlite3', 'db'],
+        'postgresql': ['postgresql', 'postgres'],
+        'mysql': ['mysql', 'mariadb'],
+        'mssql': ['mssql', 'sqlserver'],
+        'oracle': ['oracle'],
+    }
+    
+    def __init__(self, 
+                 db_path: Optional[str] = None,
+                 connection_string: Optional[str] = None,
+                 db_type: Optional[str] = None,
+                 custom_db_path: Optional[str] = None):
         """Initialize database manager.
         
         Args:
-            db_path: Path to default SQLite database file
-            custom_db_path: Path to custom uploaded database file
+            db_path: Path to SQLite database file (for default or file-based databases)
+            connection_string: SQLAlchemy connection string (e.g., 'postgresql://user:pass@host:port/dbname')
+            db_type: Database type ('sqlite', 'postgresql', 'mysql', etc.) - auto-detected if not provided
+            custom_db_path: Path to custom uploaded database file (deprecated, use db_path)
         """
-        if custom_db_path:
-            self.db_path = custom_db_path
-            self.is_custom_db = True
-        else:
-            self.db_path = db_path
-            self.is_custom_db = False
-            
-        self.engine = create_engine(f"sqlite:///{self.db_path}")
+        self.engine = None
+        self.db_type = None
+        self.connection_string = None
+        self.is_custom_db = False
+        self.db_path = None
         
-        # Only create tables and populate data for default database
-        if not self.is_custom_db:
+        # Handle deprecated custom_db_path parameter
+        if custom_db_path:
+            db_path = custom_db_path
+            self.is_custom_db = True
+        
+        # Determine database connection method
+        if connection_string:
+            # Connection string provided (PostgreSQL, MySQL, etc.)
+            self.connection_string = connection_string
+            self.db_type = db_type or self._detect_db_type_from_connection_string(connection_string)
+            self._create_engine_from_connection_string()
+        elif db_path:
+            # File path provided (SQLite)
+            self.db_path = db_path
+            self.db_type = 'sqlite'
+            self.is_custom_db = True
+            self._create_engine_from_file()
+        else:
+            # Default: create sample SQLite database
+            self.db_path = "business_data.db"
+            self.db_type = 'sqlite'
+            self.is_custom_db = False
+            self._create_engine_from_file()
             self._create_tables()
             self._populate_sample_data()
+        
+        # Validate connection
+        self._validate_connection()
+    
+    def _detect_db_type_from_connection_string(self, connection_string: str) -> str:
+        """Detect database type from connection string."""
+        connection_string_lower = connection_string.lower()
+        
+        if connection_string_lower.startswith('postgresql://') or connection_string_lower.startswith('postgres://'):
+            return 'postgresql'
+        elif connection_string_lower.startswith('mysql://') or connection_string_lower.startswith('mysql+pymysql://'):
+            return 'mysql'
+        elif connection_string_lower.startswith('mssql://') or connection_string_lower.startswith('mssql+pyodbc://'):
+            return 'mssql'
+        elif connection_string_lower.startswith('oracle://') or connection_string_lower.startswith('oracle+cx_oracle://'):
+            return 'oracle'
+        elif connection_string_lower.startswith('sqlite:///'):
+            return 'sqlite'
+        else:
+            # Try to parse as URL
+            try:
+                parsed = urlparse(connection_string)
+                scheme = parsed.scheme.split('+')[0]  # Remove driver prefix
+                return scheme
+            except Exception:
+                raise ValueError(f"Unable to detect database type from connection string: {connection_string}")
+    
+    def _create_engine_from_connection_string(self):
+        """Create SQLAlchemy engine from connection string."""
+        try:
+            self.engine = create_engine(
+                self.connection_string,
+                pool_pre_ping=True,  # Verify connections before using
+                echo=False  # Set to True for SQL query logging
+            )
+        except Exception as e:
+            raise ValueError(f"Failed to create database connection: {str(e)}")
+    
+    def _create_engine_from_file(self):
+        """Create SQLAlchemy engine from file path (SQLite)."""
+        try:
+            # Normalize path for SQLite
+            if self.db_path:
+                # Handle absolute and relative paths
+                if not os.path.isabs(self.db_path):
+                    # Relative path - create in current directory
+                    self.db_path = os.path.abspath(self.db_path)
+                
+                # Ensure directory exists
+                db_dir = os.path.dirname(self.db_path)
+                if db_dir and not os.path.exists(db_dir):
+                    os.makedirs(db_dir, exist_ok=True)
+                
+                # Create SQLite connection string
+                sqlite_url = f"sqlite:///{self.db_path}"
+                self.engine = create_engine(
+                    sqlite_url,
+                    pool_pre_ping=True,
+                    connect_args={"check_same_thread": False}  # Allow multiple threads for SQLite
+                )
+            else:
+                raise ValueError("Database path is required for file-based databases")
+        except Exception as e:
+            raise ValueError(f"Failed to create database connection to file '{self.db_path}': {str(e)}")
+    
+    def _validate_connection(self):
+        """Validate database connection."""
+        try:
+            with self.engine.connect() as conn:
+                # Test connection with a simple query
+                if self.db_type == 'sqlite':
+                    conn.execute(text("SELECT 1"))
+                else:
+                    # For other databases, use database-specific test query
+                    conn.execute(text("SELECT 1"))
+        except SQLAlchemyError as e:
+            raise ConnectionError(f"Failed to connect to database: {str(e)}")
+        except Exception as e:
+            raise ConnectionError(f"Database connection validation failed: {str(e)}")
     
     def _create_tables(self):
-        """Create database tables for business data."""
+        """Create database tables for business data (only for default SQLite database)."""
+        if self.db_type != 'sqlite' or self.is_custom_db:
+            return  # Only create tables for default SQLite database
+        
         with self.engine.connect() as conn:
             # Customers table
             conn.execute(text("""
@@ -115,12 +234,18 @@ class DatabaseManager:
             conn.commit()
     
     def _populate_sample_data(self):
-        """Generate and populate sample business data."""
+        """Generate and populate sample business data (only for default database)."""
+        if self.db_type != 'sqlite' or self.is_custom_db:
+            return  # Only populate for default SQLite database
+        
         with self.engine.connect() as conn:
             # Check if data already exists
-            result = conn.execute(text("SELECT COUNT(*) FROM customers")).fetchone()
-            if result[0] > 0:
-                return  # Data already exists
+            try:
+                result = conn.execute(text("SELECT COUNT(*) FROM customers")).fetchone()
+                if result[0] > 0:
+                    return  # Data already exists
+            except Exception:
+                pass  # Table doesn't exist yet, continue to create data
             
             # Generate sample data
             self._generate_customers(conn)
@@ -260,6 +385,102 @@ class DatabaseManager:
         df = pd.DataFrame(sales_data)
         df.to_sql('sales', conn, if_exists='append', index=False)
     
+    def get_table_schema(self) -> Dict[str, List[str]]:
+        """Get schema information for all tables using SQLAlchemy inspector (database-agnostic).
+        
+        Returns:
+            Dictionary mapping table names to their column lists
+        """
+        schema = {}
+        
+        try:
+            inspector = inspect(self.engine)
+            tables = inspector.get_table_names()
+            
+            # Also get views if supported
+            try:
+                views = inspector.get_view_names()
+                tables.extend(views)
+            except Exception:
+                pass  # Views might not be supported by all databases
+            
+            for table_name in tables:
+                try:
+                    # Get columns for this table
+                    columns = inspector.get_columns(table_name)
+                    column_names = [col['name'] for col in columns]
+                    
+                    if column_names:  # Only add tables that have columns
+                        schema[table_name] = column_names
+                except Exception as e:
+                    # Skip tables that can't be accessed
+                    print(f"Warning: Could not access table '{table_name}': {str(e)}")
+                    continue
+        
+        except Exception as e:
+            # Fallback to SQL-based schema discovery for SQLite
+            if self.db_type == 'sqlite':
+                try:
+                    with self.engine.connect() as conn:
+                        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+                        tables = [row[0] for row in result.fetchall()]
+                        
+                        for table in tables:
+                            try:
+                                result = conn.execute(text(f"PRAGMA table_info({table})"))
+                                columns = [row[1] for row in result.fetchall()]
+                                if columns:
+                                    schema[table] = columns
+                            except Exception:
+                                continue
+                except Exception:
+                    raise ValueError(f"Failed to discover database schema: {str(e)}")
+            else:
+                raise ValueError(f"Failed to discover database schema: {str(e)}")
+        
+        return schema
+    
+    def get_detailed_schema(self) -> Dict[str, Dict[str, Any]]:
+        """Get detailed schema information including column types and constraints.
+        
+        Returns:
+            Dictionary with detailed schema information
+        """
+        detailed_schema = {}
+        
+        try:
+            inspector = inspect(self.engine)
+            tables = inspector.get_table_names()
+            
+            for table_name in tables:
+                try:
+                    columns = inspector.get_columns(table_name)
+                    primary_keys = inspector.get_primary_keys(table_name)
+                    
+                    # Get foreign keys
+                    foreign_keys = []
+                    try:
+                        fks = inspector.get_foreign_keys(table_name)
+                        foreign_keys = [fk for fk in fks]
+                    except Exception:
+                        pass
+                    
+                    detailed_schema[table_name] = {
+                        'columns': {col['name']: {
+                            'type': str(col['type']),
+                            'nullable': col.get('nullable', True),
+                            'default': col.get('default'),
+                        } for col in columns},
+                        'primary_keys': primary_keys,
+                        'foreign_keys': foreign_keys
+                    }
+                except Exception:
+                    continue
+        except Exception as e:
+            raise ValueError(f"Failed to get detailed schema: {str(e)}")
+        
+        return detailed_schema
+    
     def execute_query(self, query: str) -> pd.DataFrame:
         """Execute SQL query and return results as DataFrame.
         
@@ -272,14 +493,15 @@ class DatabaseManager:
         try:
             # Validate input
             if not query or not query.strip():
-                raise Exception("Empty query provided")
+                raise ValueError("Empty query provided")
             
             # Clean up the query - remove semicolons and extra whitespace
             clean_query = query.strip().rstrip(';')
             
             # Basic validation - check if query looks valid
-            if not clean_query.upper().startswith(('SELECT', 'WITH', 'PRAGMA')):
-                raise Exception(f"Invalid query type. Only SELECT queries are supported. Got: {clean_query[:20]}...")
+            query_upper = clean_query.upper().strip()
+            if not query_upper.startswith(('SELECT', 'WITH', 'PRAGMA', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN')):
+                raise ValueError(f"Invalid query type. Only SELECT and read-only queries are supported. Got: {clean_query[:50]}...")
             
             # Validate query against schema before execution (non-blocking)
             validation_error = self._validate_query_against_schema(clean_query)
@@ -290,21 +512,28 @@ class DatabaseManager:
             with self.engine.connect() as conn:
                 try:
                     result = conn.execute(text(clean_query))
-                    columns = result.keys()
-                    data = result.fetchall()
                     
-                    # Check if we got any results
-                    if not columns:
-                        raise Exception("Query returned no columns")
+                    # Check if result has columns (SELECT query)
+                    if result.returns_rows:
+                        columns = result.keys()
+                        data = result.fetchall()
+                        
+                        # Check if we got any results
+                        if not columns:
+                            raise ValueError("Query returned no columns")
+                        
+                        return pd.DataFrame(data, columns=columns)
+                    else:
+                        # Non-SELECT query (e.g., PRAGMA, SHOW)
+                        # Return empty DataFrame with success message
+                        return pd.DataFrame({'status': ['Query executed successfully']})
                     
-                    return pd.DataFrame(data, columns=columns)
-                    
-                except Exception as db_err:
+                except SQLAlchemyError as db_err:
                     # Re-raise with better error message
                     error_msg = str(db_err)
                     
                     # Provide more helpful error messages
-                    if "no such column" in error_msg.lower():
+                    if "no such column" in error_msg.lower() or "column" in error_msg.lower() and "does not exist" in error_msg.lower():
                         schema = self.get_table_schema()
                         # Find the problematic column by analyzing the query
                         problematic_table = None
@@ -315,29 +544,32 @@ class DatabaseManager:
                         
                         if problematic_table:
                             available_cols = schema[problematic_table]
-                            raise Exception(
+                            raise ValueError(
                                 f"Column doesn't exist in table '{problematic_table}'. "
                                 f"Available columns: {', '.join(available_cols)}. "
                                 f"Please check your question."
                             )
                         else:
-                            raise Exception(
+                            raise ValueError(
                                 f"Column doesn't exist. Available tables: {', '.join(list(schema.keys()))}. "
                                 f"Please check your question."
                             )
-                    elif "no such table" in error_msg.lower():
+                    elif "no such table" in error_msg.lower() or "table" in error_msg.lower() and "does not exist" in error_msg.lower():
                         schema = self.get_table_schema()
                         available_tables = list(schema.keys())
-                        raise Exception(
+                        raise ValueError(
                             f"Table doesn't exist. Available tables: {', '.join(available_tables)}. "
                             f"Please check your question."
                         )
                     else:
-                        raise Exception(f"Database Error: {error_msg}")
+                        raise ValueError(f"Database Error: {error_msg}")
                         
+        except ValueError as e:
+            # Re-raise ValueError as-is
+            raise e
         except Exception as e:
             # Re-raise with clearer message
-            raise e
+            raise ValueError(f"Query execution failed: {str(e)}")
     
     def _validate_query_against_schema(self, query: str) -> Optional[str]:
         """Validate SQL query against database schema.
@@ -349,64 +581,35 @@ class DatabaseManager:
             Error message if validation fails, None otherwise
         """
         try:
-            import re
             schema = self.get_table_schema()
             available_tables = list(schema.keys())
             
-            # Extract table names from query
+            if not available_tables:
+                return "No tables found in database"
+            
+            # Extract table names from query (basic pattern matching)
             query_upper = query.upper()
             
             # Find tables in FROM clause
-            from_match = re.search(r'FROM\s+(\w+)', query_upper)
-            tables_in_query = []
-            if from_match:
-                table_name = from_match.group(1).lower()
-                tables_in_query.append(table_name)
+            from_pattern = r'FROM\s+(\w+)'
+            from_matches = re.findall(from_pattern, query_upper)
             
             # Find tables in JOIN clauses
-            join_matches = re.findall(r'JOIN\s+(\w+)', query_upper)
-            tables_in_query.extend([t.lower() for t in join_matches])
+            join_pattern = r'JOIN\s+(\w+)'
+            join_matches = re.findall(join_pattern, query_upper)
+            
+            tables_in_query = [t.lower() for t in from_matches + join_matches]
             
             # Check if all tables exist
             for table in tables_in_query:
                 if table not in [t.lower() for t in available_tables]:
                     return f"The requested table '{table}' doesn't exist in the database. Available tables: {', '.join(available_tables)}"
             
-            # Extract column names (basic check)
-            # This is a simplified validation - we check if columns from the schema are used
-            # We can't easily validate all columns without parsing the full SQL
             return None
             
         except Exception:
             # If validation fails, don't block the query - let the database handle it
             return None
-    
-    def get_table_schema(self) -> Dict[str, List[str]]:
-        """Get schema information for all tables.
-        
-        Returns:
-            Dictionary mapping table names to their column lists
-        """
-        schema = {}
-        with self.engine.connect() as conn:
-            if self.is_custom_db:
-                # For custom databases, discover all tables dynamically
-                result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
-                tables = [row[0] for row in result.fetchall()]
-            else:
-                # For default database, use known tables
-                tables = ['customers', 'products', 'orders', 'order_items', 'sales']
-            
-            for table in tables:
-                try:
-                    result = conn.execute(text(f"PRAGMA table_info({table})"))
-                    columns = [row[1] for row in result.fetchall()]
-                    if columns:  # Only add tables that exist and have columns
-                        schema[table] = columns
-                except Exception:
-                    # Skip tables that can't be accessed
-                    continue
-        return schema
     
     def get_database_info(self) -> Dict[str, Any]:
         """Get database information.
@@ -414,24 +617,228 @@ class DatabaseManager:
         Returns:
             Dictionary with database information
         """
+        schema = self.get_table_schema()
+        
         info = {
+            'db_type': self.db_type,
             'is_custom': self.is_custom_db,
-            'path': self.db_path,
-            'tables': list(self.get_table_schema().keys())
+            'tables': list(schema.keys()),
+            'table_count': len(schema),
+            'total_columns': sum(len(cols) for cols in schema.values())
         }
+        
+        if self.db_path:
+            info['path'] = self.db_path
+        elif self.connection_string:
+            # Mask password in connection string
+            try:
+                parsed = urlparse(self.connection_string)
+                if parsed.password:
+                    masked = self.connection_string.replace(parsed.password, '***')
+                    info['connection_string'] = masked
+                else:
+                    info['connection_string'] = self.connection_string
+            except Exception:
+                info['connection_string'] = '***'
+        
         return info
     
     def get_sample_queries(self) -> List[str]:
-        """Get sample queries for demonstration.
+        """Get sample queries for demonstration based on available tables.
         
         Returns:
             List of sample SQL queries
         """
-        return [
-            "SELECT COUNT(*) as total_customers FROM customers",
-            "SELECT category, COUNT(*) as product_count FROM products GROUP BY category",
-            "SELECT status, COUNT(*) as order_count FROM orders GROUP BY status",
-            "SELECT c.customer_segment, SUM(o.total_amount) as total_sales FROM customers c JOIN orders o ON c.customer_id = o.customer_id GROUP BY c.customer_segment",
-            "SELECT p.category, SUM(s.total_amount) as total_sales FROM products p JOIN sales s ON p.product_id = s.product_id GROUP BY p.category ORDER BY total_sales DESC",
-            "SELECT DATE(sale_date) as date, SUM(total_amount) as daily_sales FROM sales GROUP BY DATE(sale_date) ORDER BY date DESC LIMIT 30"
-        ]
+        schema = self.get_table_schema()
+        
+        if not schema:
+            return ["SELECT 1"]  # Default query if no tables
+        
+        # Get first table
+        first_table = list(schema.keys())[0]
+        first_table_cols = schema[first_table]
+        
+        sample_queries = []
+        
+        # Basic count query
+        sample_queries.append(f"SELECT COUNT(*) as total_count FROM {first_table}")
+        
+        # If we have multiple tables, create join query
+        if len(schema) > 1:
+            tables = list(schema.keys())
+            table1, table2 = tables[0], tables[1]
+            cols1 = schema[table1]
+            cols2 = schema[table2]
+            
+            # Find common column names (potential join keys)
+            common_cols = set(cols1) & set(cols2)
+            if common_cols:
+                join_col = list(common_cols)[0]
+                sample_queries.append(
+                    f"SELECT {table1}.*, {table2}.* FROM {table1} JOIN {table2} ON {table1}.{join_col} = {table2}.{join_col} LIMIT 10"
+                )
+        
+        # Group by query if we have categorical columns
+        categorical_keywords = ['category', 'type', 'status', 'segment', 'name', 'city', 'state']
+        for table, cols in schema.items():
+            for col in cols:
+                if any(keyword in col.lower() for keyword in categorical_keywords):
+                    sample_queries.append(f"SELECT {col}, COUNT(*) as count FROM {table} GROUP BY {col} LIMIT 10")
+                    break
+        
+        # Limit to 5 sample queries
+        return sample_queries[:5]
+    
+    def test_connection(self) -> bool:
+        """Test database connection.
+        
+        Returns:
+            True if connection is successful, False otherwise
+        """
+        try:
+            self._validate_connection()
+            return True
+        except Exception:
+            return False
+    
+    @staticmethod
+    def create_from_file(file_path: str) -> 'DatabaseManager':
+        """Create DatabaseManager from file path.
+        
+        Args:
+            file_path: Path to database file
+            
+        Returns:
+            DatabaseManager instance
+        """
+        return DatabaseManager(db_path=file_path)
+    
+    @staticmethod
+    def create_from_connection_string(connection_string: str, db_type: Optional[str] = None) -> 'DatabaseManager':
+        """Create DatabaseManager from connection string.
+        
+        Args:
+            connection_string: SQLAlchemy connection string
+            db_type: Database type (auto-detected if not provided)
+            
+        Returns:
+            DatabaseManager instance
+        """
+        return DatabaseManager(connection_string=connection_string, db_type=db_type)
+    
+    @staticmethod
+    def create_from_csv(csv_path: str, table_name: Optional[str] = None) -> 'DatabaseManager':
+        """Create DatabaseManager from CSV file by importing into SQLite.
+        
+        Args:
+            csv_path: Path to CSV file
+            table_name: Optional table name (defaults to filename without extension)
+            
+        Returns:
+            DatabaseManager instance with imported data
+        """
+        # Read CSV file
+        df = pd.read_csv(csv_path)
+        
+        # Determine table name
+        if table_name is None:
+            table_name = Path(csv_path).stem.replace(' ', '_').replace('-', '_').lower()
+        
+        # Create temporary SQLite database
+        temp_dir = tempfile.gettempdir()
+        temp_db_path = os.path.join(temp_dir, f"imported_{table_name}_{datetime.now().strftime('%Y%m%d%H%M%S')}.db")
+        
+        # Create SQLite database and import data
+        engine = create_engine(f"sqlite:///{temp_db_path}")
+        df.to_sql(table_name, engine, if_exists='replace', index=False)
+        
+        # Create and return DatabaseManager
+        return DatabaseManager(db_path=temp_db_path)
+    
+    @staticmethod
+    def create_from_excel(excel_path: str, sheet_name: Optional[str] = None, 
+                         table_name: Optional[str] = None) -> 'DatabaseManager':
+        """Create DatabaseManager from Excel file by importing into SQLite.
+        
+        Args:
+            excel_path: Path to Excel file
+            sheet_name: Optional sheet name (defaults to first sheet)
+            table_name: Optional table name (defaults to filename without extension)
+            
+        Returns:
+            DatabaseManager instance with imported data
+        """
+        # Read Excel file
+        if sheet_name:
+            df = pd.read_excel(excel_path, sheet_name=sheet_name)
+        else:
+            df = pd.read_excel(excel_path)
+        
+        # Determine table name
+        if table_name is None:
+            table_name = Path(excel_path).stem.replace(' ', '_').replace('-', '_').lower()
+        
+        # Create temporary SQLite database
+        temp_dir = tempfile.gettempdir()
+        temp_db_path = os.path.join(temp_dir, f"imported_{table_name}_{datetime.now().strftime('%Y%m%d%H%M%S')}.db")
+        
+        # Create SQLite database and import data
+        engine = create_engine(f"sqlite:///{temp_db_path}")
+        df.to_sql(table_name, engine, if_exists='replace', index=False)
+        
+        # Create and return DatabaseManager
+        return DatabaseManager(db_path=temp_db_path)
+    
+    @staticmethod
+    def create_from_parquet(parquet_path: str, table_name: Optional[str] = None) -> 'DatabaseManager':
+        """Create DatabaseManager from Parquet file by importing into SQLite.
+        
+        Args:
+            parquet_path: Path to Parquet file
+            table_name: Optional table name (defaults to filename without extension)
+            
+        Returns:
+            DatabaseManager instance with imported data
+        """
+        # Read Parquet file
+        df = pd.read_parquet(parquet_path)
+        
+        # Determine table name
+        if table_name is None:
+            table_name = Path(parquet_path).stem.replace(' ', '_').replace('-', '_').lower()
+        
+        # Create temporary SQLite database
+        temp_dir = tempfile.gettempdir()
+        temp_db_path = os.path.join(temp_dir, f"imported_{table_name}_{datetime.now().strftime('%Y%m%d%H%M%S')}.db")
+        
+        # Create SQLite database and import data
+        engine = create_engine(f"sqlite:///{temp_db_path}")
+        df.to_sql(table_name, engine, if_exists='replace', index=False)
+        
+        # Create and return DatabaseManager
+        return DatabaseManager(db_path=temp_db_path)
+    
+    @staticmethod
+    def create_from_dataframe(df: pd.DataFrame, table_name: str = "data") -> 'DatabaseManager':
+        """Create DatabaseManager from pandas DataFrame by importing into SQLite.
+        
+        Args:
+            df: pandas DataFrame
+            table_name: Table name for the data
+            
+        Returns:
+            DatabaseManager instance with imported data
+        """
+        # Clean table name
+        table_name = table_name.replace(' ', '_').replace('-', '_').lower()
+        
+        # Create temporary SQLite database
+        temp_dir = tempfile.gettempdir()
+        temp_db_path = os.path.join(temp_dir, f"imported_{table_name}_{datetime.now().strftime('%Y%m%d%H%M%S')}.db")
+        
+        # Create SQLite database and import data
+        engine = create_engine(f"sqlite:///{temp_db_path}")
+        df.to_sql(table_name, engine, if_exists='replace', index=False)
+        
+        # Create and return DatabaseManager
+        return DatabaseManager(db_path=temp_db_path)

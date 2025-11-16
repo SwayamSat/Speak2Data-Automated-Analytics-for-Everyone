@@ -3,13 +3,24 @@ Speak2Data: Automated Analytics for Everyone
 Main Streamlit application for natural language data analysis.
 """
 
+import os
+import warnings
+import logging
+
+# Suppress gRPC/ALTS warnings before importing other modules
+os.environ['GRPC_VERBOSITY'] = 'ERROR'
+os.environ['GRPC_TRACE'] = ''
+os.environ['GLOG_minloglevel'] = '2'
+warnings.filterwarnings('ignore')
+logging.getLogger('google').setLevel(logging.ERROR)
+logging.getLogger('grpc').setLevel(logging.ERROR)
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 from typing import Dict, List
-import os
 import sys
 
 # Import our custom modules
@@ -1015,6 +1026,8 @@ if 'query_suggestions' not in st.session_state:
     st.session_state.query_suggestions = []
 if 'schema_hash' not in st.session_state:
     st.session_state.schema_hash = None
+if 'last_uploaded_file_id' not in st.session_state:
+    st.session_state.last_uploaded_file_id = None
 
 def initialize_components():
     """Initialize all components of the application."""
@@ -1071,104 +1084,124 @@ def display_sidebar():
         </div>
         """, unsafe_allow_html=True)
         
-        # File uploader for custom database
+        # File uploader for custom database or data files
         uploaded_file = st.file_uploader(
-            "Upload Custom Database",
-            type=['db', 'sqlite', 'sqlite3'],
-            help="Upload your own SQLite database file (.db, .sqlite, .sqlite3)",
+            "Upload Database or Data File",
+            type=['db', 'sqlite', 'sqlite3', 'csv', 'xlsx', 'xls', 'parquet'],
+            help="Upload SQLite database (.db, .sqlite) or data files (.csv, .xlsx, .parquet) - will be automatically imported",
             key="db_uploader"
         )
         
-        # Handle database upload
+        # Handle database or data file upload
         if uploaded_file is not None:
-            try:
-                # Save uploaded file temporarily
-                import tempfile
-                import os
-                
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.db') as tmp_file:
-                    tmp_file.write(uploaded_file.getvalue())
-                    temp_db_path = tmp_file.name
-                
-                # Initialize database manager with custom database
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
+            # Check if this is a new file (not already processed)
+            current_file_id = f"{uploaded_file.name}_{uploaded_file.size}"
+            
+            if st.session_state.get('last_uploaded_file_id') != current_file_id:
                 try:
-                    # Step 1: Load database
-                    status_text.text(f"📂 Loading database '{uploaded_file.name}'...")
+                    # Save uploaded file temporarily
+                    import tempfile
+                    import os
+                    
+                    file_extension = uploaded_file.name.split('.')[-1].lower()
+                    suffix = f'.{file_extension}'
+                    
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+                        tmp_file.write(uploaded_file.getvalue())
+                        temp_file_path = tmp_file.name
+                    
+                    # Initialize database manager based on file type
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    # Step 1: Load file
+                    status_text.text(f"📂 Loading file '{uploaded_file.name}'...")
                     progress_bar.progress(20)
                     
-                    st.session_state.db_manager = DatabaseManager(custom_db_path=temp_db_path)
-                    st.session_state.custom_db_uploaded = True
-                    st.session_state.custom_db_name = uploaded_file.name
-                    
-                    # Step 2: Get schema
-                    status_text.text("🔍 Analyzing database schema...")
-                    progress_bar.progress(40)
-                    
-                    # Clear cached suggestions to regenerate for new database
-                    st.session_state.query_suggestions = []
-                    st.session_state.schema_hash = None
-                    
-                    # Reset NLP processor and SQL generator to force reinitialization with new schema
-                    st.session_state.nlp_processor = None
-                    st.session_state.sql_generator = None
-                    
-                    # Get schema from new database
-                    if st.session_state.db_manager:
-                        current_schema = st.session_state.db_manager.get_table_schema()
-                        if current_schema:
-                            schema_info = {"tables": current_schema}
-                            
-                            # Step 3: Initialize NLP processor
-                            status_text.text("🤖 Initializing AI components...")
-                            progress_bar.progress(60)
-                            
-                            # Initialize NLP processor with new schema
-                            st.session_state.nlp_processor = NLPProcessor(schema_info=schema_info)
-                            
-                            # Initialize SQL generator
-                            st.session_state.sql_generator = SQLGenerator(st.session_state.nlp_processor)
-                            
-                            # Step 4: Generate query suggestions
-                            status_text.text("💡 Generating AI-powered query suggestions...")
-                            progress_bar.progress(80)
-                            
-                            # Generate new query suggestions immediately
-                            try:
-                                if st.session_state.nlp_processor:
-                                    st.session_state.query_suggestions = st.session_state.nlp_processor._generate_fallback_suggestions(
-                                        current_schema, num_suggestions=6
-                                    )
-                                else:
-                                    st.session_state.query_suggestions = _generate_basic_suggestions(current_schema)
-                                st.session_state.schema_hash = hash(str(sorted(current_schema.items())))
-                                
-                                progress_bar.progress(100)
-                                status_text.text("✅ Database loaded and ready!")
-                                
-                                st.success(f"✅ Database '{uploaded_file.name}' loaded successfully!")
-                                st.info(f"📊 Found {len(current_schema)} tables: {', '.join(list(current_schema.keys())[:5])}{'...' if len(current_schema) > 5 else ''}")
-                            except Exception as e:
-                                # Use basic suggestions if fallback fails
-                                st.session_state.query_suggestions = _generate_basic_suggestions(current_schema)
-                                st.session_state.schema_hash = hash(str(sorted(current_schema.items())))
-                        else:
-                            st.warning("⚠️ Database loaded but no tables found.")
+                    # Determine file type and import accordingly
+                    if file_extension in ['db', 'sqlite', 'sqlite3']:
+                        st.session_state.db_manager = DatabaseManager(custom_db_path=temp_file_path)
+                    elif file_extension == 'csv':
+                        st.session_state.db_manager = DatabaseManager.create_from_csv(temp_file_path)
+                    elif file_extension in ['xlsx', 'xls']:
+                        st.session_state.db_manager = DatabaseManager.create_from_excel(temp_file_path)
+                    elif file_extension == 'parquet':
+                        st.session_state.db_manager = DatabaseManager.create_from_parquet(temp_file_path)
                     else:
-                        st.error("❌ Failed to load database.")
+                        st.error(f"❌ Unsupported file type: {file_extension}")
+                        progress_bar.empty()
+                        status_text.empty()
                     
-                    progress_bar.empty()
-                    status_text.empty()
+                    if file_extension in ['db', 'sqlite', 'sqlite3', 'csv', 'xlsx', 'xls', 'parquet']:
+                        st.session_state.custom_db_uploaded = True
+                        st.session_state.custom_db_name = uploaded_file.name
+                        st.session_state.last_uploaded_file_id = current_file_id
+                        
+                        # Step 2: Get schema
+                        status_text.text("🔍 Analyzing database schema...")
+                        progress_bar.progress(40)
+                        
+                        # Clear cached suggestions to regenerate for new database
+                        st.session_state.query_suggestions = []
+                        st.session_state.schema_hash = None
+                        
+                        # Reset NLP processor and SQL generator to force reinitialization with new schema
+                        st.session_state.nlp_processor = None
+                        st.session_state.sql_generator = None
+                        
+                        # Get schema from new database
+                        if st.session_state.db_manager:
+                            current_schema = st.session_state.db_manager.get_table_schema()
+                            if current_schema:
+                                schema_info = {"tables": current_schema}
+                                
+                                # Step 3: Initialize NLP processor
+                                status_text.text("🤖 Initializing AI components...")
+                                progress_bar.progress(60)
+                                
+                                # Initialize NLP processor with new schema
+                                st.session_state.nlp_processor = NLPProcessor(schema_info=schema_info)
+                                
+                                # Initialize SQL generator
+                                st.session_state.sql_generator = SQLGenerator(st.session_state.nlp_processor)
+                                
+                                # Step 4: Generate query suggestions
+                                status_text.text("💡 Generating AI-powered query suggestions...")
+                                progress_bar.progress(80)
+                                
+                                # Generate new query suggestions immediately
+                                try:
+                                    if st.session_state.nlp_processor:
+                                        st.session_state.query_suggestions = st.session_state.nlp_processor._generate_fallback_suggestions(
+                                            current_schema, num_suggestions=6
+                                        )
+                                    else:
+                                        st.session_state.query_suggestions = _generate_basic_suggestions(current_schema)
+                                    st.session_state.schema_hash = hash(str(sorted(current_schema.items())))
+                                    
+                                    progress_bar.progress(100)
+                                    status_text.text("✅ Database loaded and ready!")
+                                    
+                                    st.success(f"✅ Database '{uploaded_file.name}' loaded successfully!")
+                                    st.info(f"📊 Found {len(current_schema)} tables: {', '.join(list(current_schema.keys())[:5])}{'...' if len(current_schema) > 5 else ''}")
+                                except Exception as e:
+                                    # Use basic suggestions if fallback fails
+                                    st.session_state.query_suggestions = _generate_basic_suggestions(current_schema)
+                                    st.session_state.schema_hash = hash(str(sorted(current_schema.items())))
+                            else:
+                                st.warning("⚠️ Database loaded but no tables found.")
+                        else:
+                            st.error("❌ Failed to load database.")
+                        
+                        progress_bar.empty()
+                        status_text.empty()
+                        
+                        # Only rerun once after successful load
+                        st.rerun()
                     
-                finally:
-                    # Always rerun to refresh UI
-                    st.rerun()
-                
-            except Exception as e:
-                st.error(f"❌ Error loading database: {str(e)}")
-                st.info("Using default database instead.")
+                except Exception as e:
+                    st.error(f"❌ Error loading database: {str(e)}")
+                    st.info("Using default database instead.")
         
         # Reset to default database option
         if st.session_state.get('custom_db_uploaded', False):

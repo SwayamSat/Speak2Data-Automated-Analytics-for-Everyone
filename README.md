@@ -1,16 +1,37 @@
 # 📊 Speak2Data: Automated Analytics for Everyone
 
-Speak2Data is a powerful web-based platform that allows non-technical users to analyze business data by asking questions in natural language. The system interprets your questions, generates SQL queries, executes them on a business database, and can even build and run machine learning pipelines—all in one seamless flow.
+Speak2Data is a **domain-free, schema-agnostic** data analysis platform that allows non-technical users to analyze ANY database by asking questions in natural language. The system automatically adapts to your database structure, interprets your questions, generates SQL queries, executes them, and can even build and run machine learning pipelines—all in one seamless flow.
 
 ## ✨ Features
 
+### Universal Database Support 🗄️
+- **Works with ANY sector**: Finance, Healthcare, Retail, HR, Manufacturing, IoT, Education, etc.
+- **Multiple file formats**: SQLite (.db), CSV (.csv), Excel (.xlsx, .xls), Parquet (.parquet)
+- **Automatic schema detection**: Discovers tables and columns dynamically
+- **Zero configuration**: Upload any database and start asking questions immediately
+- **No hardcoded assumptions**: Fully adapts to your data structure
+
+### Intelligent Analysis 🤖
 - **Natural Language Processing**: Ask questions in plain English using Google Gemini Pro
-- **Automatic SQL Generation**: Converts your questions into optimized SQL queries
-- **Interactive Visualizations**: Auto-generated charts and graphs using Plotly
-- **Machine Learning Integration**: Automated ML pipelines for predictions and analysis
+- **Automatic SQL Generation**: Converts your questions into optimized SQL queries for YOUR schema
+- **Smart Schema Awareness**: AI understands your specific tables and columns
+- **Context-aware suggestions**: Query suggestions tailored to your database structure
+
+### Powerful Visualizations 📊
+- **Auto-generated charts**: Bar charts, line charts, scatter plots, heatmaps
+- **Interactive visualizations**: Powered by Plotly for dynamic data exploration
+- **Smart visualization selection**: Automatically chooses appropriate chart types
+
+### Machine Learning 🔮
+- **Domain-agnostic ML**: Works with any tabular data
+- **Automated pipelines**: Classification, regression, clustering
+- **No feature engineering required**: Automatically handles any column types
+- **Performance metrics**: R², RMSE, accuracy, and feature importance
+
+### User Experience ✨
 - **Real-time Data Analysis**: Instant results with comprehensive explanations
 - **User-friendly Interface**: Clean, modern Streamlit-based web application
-- **Sample Business Data**: Pre-loaded with realistic business datasets
+- **Sample Database**: Pre-loaded business data for testing and learning
 
 ## 🚀 Quick Start
 
@@ -86,22 +107,47 @@ NLPToSQL/
 
 ## 💡 Usage Examples
 
-### Data Retrieval Queries
+### Example 1: Retail/E-commerce Database
+**Tables**: customers, orders, products, sales
 - "Show me the total sales by product category"
 - "What are the top 10 customers by order value?"
 - "Which products are most profitable?"
-- "Show me sales trends over the last 6 months"
-
-### Machine Learning Queries
 - "Predict customer churn based on order history"
-- "Cluster customers based on their purchase behavior"
-- "Forecast sales for next quarter"
-- "Classify products by profitability"
 
-### Analytics Queries
-- "What's the average order value by customer segment?"
-- "Show me the correlation between product price and sales"
-- "Which regions have the highest growth?"
+### Example 2: Healthcare Database
+**Tables**: patients, visits, medications, doctors
+- "Show me patient visit trends by month"
+- "What are the most prescribed medications?"
+- "Find patients with multiple visits this year"
+- "Analyze patient demographics by condition"
+
+### Example 3: Financial Database
+**Tables**: accounts, transactions, customers, loans
+- "What's the total transaction volume by account type?"
+- "Show me high-value transactions over $10,000"
+- "Analyze loan default rates by customer segment"
+- "Predict loan approval based on customer history"
+
+### Example 4: HR Database
+**Tables**: employees, departments, payroll, attendance
+- "Show me average salary by department"
+- "What's the attendance rate by employee?"
+- "Find employees with highest performance ratings"
+- "Analyze turnover rates across departments"
+
+### Example 5: IoT Sensor Database
+**Tables**: sensors, readings, locations, alerts
+- "Show me sensor readings over time"
+- "What are the average temperature readings by location?"
+- "Find sensors with abnormal readings"
+- "Predict sensor failures based on historical data"
+
+### Generic Queries (Work with Any Schema)
+- "Show me all tables and what data is available"
+- "What are the most common values in [column name]?"
+- "Give me a summary of the data"
+- "What patterns can you find?"
+- "Run machine learning analysis on this data"
 
 ## 🔧 Technical Details
 
@@ -121,15 +167,22 @@ NLPToSQL/
 - **DatabaseManager**: Handles database operations and sample data
 - **VisualizationGenerator**: Creates interactive charts and graphs
 
-### Database Schema
+### Schema-Agnostic Architecture
 
-The application includes sample business data with the following tables:
+The application automatically adapts to ANY database schema:
 
+**Default Sample Schema** (for testing):
 - **customers**: Customer information and segments
 - **products**: Product catalog with categories and pricing
 - **orders**: Order details and status
 - **order_items**: Individual items within orders
 - **sales**: Sales transactions with regional data
+
+**Your Custom Schema**:
+- Upload any database file
+- System automatically discovers all tables and columns
+- AI generates queries using YOUR exact schema
+- No configuration or setup required
 
 ## 🛠️ Configuration
 
@@ -151,31 +204,73 @@ DATABASE_URL=sqlite:///business_data.db
 2. Create a new API key
 3. Add it to your `.env` file
 
-## 📊 Sample Data
+## 🌍 Universal Database Support
 
-The application automatically generates realistic business data including:
+### Supported File Formats
+
+Speak2Data works with multiple database and data file formats:
+
+#### 1. SQLite Databases (.db, .sqlite, .sqlite3)
+- Direct connection to existing SQLite databases
+- Works with any schema structure
+- Perfect for local development and testing
+
+#### 2. CSV Files (.csv)
+- Automatically imported into SQLite
+- Table name derived from filename
+- Preserves column names and data types
+
+#### 3. Excel Files (.xlsx, .xls)
+- Imports first sheet or specified sheet
+- Handles multiple data types
+- Converts to SQLite for querying
+
+#### 4. Parquet Files (.parquet)
+- Efficient columnar storage format
+- Fast import and query performance
+- Ideal for large datasets
+
+### How It Works
+
+1. **Upload any database file** through the web interface
+2. **Automatic schema detection** discovers all tables and columns
+3. **AI analyzes structure** and generates contextual query suggestions
+4. **Ask questions naturally** - the system understands YOUR data
+5. **Get instant insights** with SQL execution and visualizations
+
+### Sample Data
+
+The application includes a pre-loaded business database for testing:
 
 - **1,000 customers** with demographic information
 - **200 products** across multiple categories
 - **5,000 orders** with various statuses
 - **10,000 sales records** with regional data
 
+But you can replace this with ANY database from ANY domain!
+
 ## 🎯 Use Cases
+
+### Universal Data Analysis
+- **Any Industry**: Retail, Healthcare, Finance, HR, Manufacturing, Education, Government
+- **Any Data Source**: CRM, ERP, IoT sensors, transaction logs, survey data
+- **Any Question**: From simple counts to complex ML predictions
 
 ### Business Analysts
 - Quick data exploration without SQL knowledge
-- Automated report generation
-- Trend analysis and forecasting
+- Automated report generation across any domain
+- Trend analysis and forecasting for any metrics
 
-### Managers
-- High-level business insights
-- Performance dashboards
-- Strategic decision support
+### Domain Experts
+- Medical researchers analyzing patient data
+- Financial analysts exploring transaction patterns
+- HR professionals reviewing employee metrics
+- Operations managers monitoring sensor data
 
 ### Data Scientists
-- Rapid prototyping of ML models
-- Automated feature engineering
-- Model performance evaluation
+- Rapid prototyping of ML models on new datasets
+- Automated feature engineering for any schema
+- Model performance evaluation across domains
 
 ## 🔍 Troubleshooting
 
@@ -205,28 +300,50 @@ The application automatically generates realistic business data including:
 
 ## 🚀 Advanced Usage
 
-### Custom Queries
+### Working with Custom Databases
 
-You can extend the system by:
+1. **Prepare your database file**
+   - SQLite: Use existing .db file
+   - CSV: Export from Excel, database, or any data source
+   - Excel: Use .xlsx or .xls format
+   - Parquet: For large datasets
 
-1. **Adding new tables** to the database schema
-2. **Customizing ML models** in the pipeline
-3. **Creating new visualizations** in the utils module
-4. **Extending NLP prompts** for better query understanding
+2. **Upload through the web interface**
+   - Click "Upload Database or Data File"
+   - Select your file
+   - System automatically detects schema
 
-### Performance Optimization
+3. **Start asking questions**
+   - AI generates suggestions based on YOUR schema
+   - Use natural language with your own table/column names
+   - System adapts all queries to your structure
 
+### Best Practices
+
+#### For Optimal Performance
 - Use specific column names in queries
 - Add appropriate filters to limit data size
-- Consider indexing for frequently queried columns
+- For large CSV/Excel files, consider Parquet format
+
+#### For Better AI Understanding
+- Use descriptive table and column names
+- Keep naming conventions consistent
+- Avoid special characters in names
+
+#### For Machine Learning
+- Ensure sufficient data (>100 rows recommended)
+- Clean missing values when possible
+- Use numeric columns for regression predictions
 
 ## 📈 Future Enhancements
 
-- Support for additional database types (PostgreSQL, MySQL)
+- Live database connections (PostgreSQL, MySQL, SQL Server)
 - More advanced ML algorithms and ensemble methods
 - Real-time data streaming capabilities
-- Custom dashboard creation
+- Custom dashboard creation and templates
 - Export functionality for reports and visualizations
+- Multi-table joins with automatic relationship detection
+- Data quality assessment and recommendations
 
 ## 🤝 Contributing
 

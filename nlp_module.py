@@ -9,6 +9,18 @@ import os
 import pandas as pd
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
+import warnings
+import logging
+
+# Suppress gRPC/ALTS warnings
+os.environ['GRPC_VERBOSITY'] = 'ERROR'
+os.environ['GRPC_TRACE'] = ''
+os.environ['GLOG_minloglevel'] = '2'
+
+# Suppress warnings
+warnings.filterwarnings('ignore')
+logging.getLogger('google').setLevel(logging.ERROR)
+logging.getLogger('grpc').setLevel(logging.ERROR)
 
 # Load environment variables
 load_dotenv()
