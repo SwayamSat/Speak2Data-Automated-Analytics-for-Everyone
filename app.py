@@ -1,2065 +1,809 @@
 """
-Speak2Data: Automated Analytics for Everyone
-Main Streamlit application for natural language data analysis.
+Speak2Data: Natural Language to Automated Analytics and ML
+Main Streamlit application orchestrating the complete pipeline.
 """
-
-import os
-import warnings
-import logging
-
-# Suppress gRPC/ALTS warnings before importing other modules
-os.environ['GRPC_VERBOSITY'] = 'ERROR'
-os.environ['GRPC_TRACE'] = ''
-os.environ['GLOG_minloglevel'] = '2'
-warnings.filterwarnings('ignore')
-logging.getLogger('google').setLevel(logging.ERROR)
-logging.getLogger('grpc').setLevel(logging.ERROR)
-
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime
-from typing import Dict, List
-import sys
+import numpy as np
+from pathlib import Path
+import traceback
+from typing import Optional, Dict, Any
 
-# Import our custom modules
-from db_module import DatabaseManager
-from nlp_module import NLPProcessor
-from sql_generator import SQLGenerator
-from ml_pipeline_simple import SimpleMLPipeline as MLPipeline
-from utils import DataProcessor, VisualizationGenerator, StreamlitHelpers, ErrorHandler
+# Import project modules
+from config import config
+from db_manager import DatabaseManager
+from llm_client import create_llm_client
+from llm_task_understanding import infer_task, refine_task_understanding
+from llm_sql_generator import generate_sql_with_retry
+from data_preprocessing import preprocess_data
+from ml_pipeline import run_pipeline
+from visualization import create_visualizations
+from experiment_logging import experiment_logger
+from utils import get_column_statistics, format_schema_for_llm, truncate_text
 
 # Page configuration
 st.set_page_config(
-    page_title="Speak2Data",
+    page_title="Speak2Data: NL to Analytics & ML",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Professional Minimal CSS Design System
-st.markdown("""
-<style>
-    /* Import Google Fonts */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-    
-    /* Root Variables - Professional Color Palette */
-    :root {
-        --primary: #2563eb;
-        --primary-dark: #1e40af;
-        --primary-light: #3b82f6;
-        --secondary: #64748b;
-        --success: #10b981;
-        --warning: #f59e0b;
-        --error: #ef4444;
-        --background: #ffffff;
-        --surface: #f8fafc;
-        --border: #e2e8f0;
-        --text-primary: #0f172a;
-        --text-secondary: #64748b;
-        --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-        --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-        --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-        --radius: 8px;
-    }
-    
-    /* Global Typography */
-    * {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    }
-    
-    /* Main Container */
-    .main .block-container {
-        padding-top: 3rem;
-        padding-bottom: 3rem;
-        max-width: 1400px;
-    }
-    
-    /* Header Styling */
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: 700;
-        color: var(--text-primary);
-        text-align: left;
-        margin-bottom: 0.5rem;
-        letter-spacing: -0.02em;
-        line-height: 1.2;
-    }
-    
-    .sub-header {
-        font-size: 1rem;
-        font-weight: 400;
-        color: var(--text-secondary);
-        text-align: left;
-        margin-bottom: 2.5rem;
-        line-height: 1.6;
-    }
-    
-    /* Section Headers */
-    h2, h3 {
-        color: var(--text-primary);
-        font-weight: 600;
-        letter-spacing: -0.01em;
-        margin-top: 2rem;
-        margin-bottom: 1rem;
-    }
-    
-    h2 {
-        font-size: 1.5rem;
-    }
-    
-    h3 {
-        font-size: 1.25rem;
-    }
-    
-    /* Sidebar Styling */
-    [data-testid="stSidebar"],
-    [data-testid="stSidebar"] > div,
-    [data-testid="stSidebar"] .css-1d391kg {
-        background-color: var(--surface) !important;
-    }
-    
-    /* Sidebar Headers */
-    [data-testid="stSidebar"] h1,
-    [data-testid="stSidebar"] h2,
-    [data-testid="stSidebar"] h3,
-    [data-testid="stSidebar"] h4,
-    [data-testid="stSidebar"] h5,
-    [data-testid="stSidebar"] h6 {
-        color: var(--text-primary) !important;
-        font-weight: 600;
-    }
-    
-    /* Sidebar Text - General text elements */
-    [data-testid="stSidebar"] p,
-    [data-testid="stSidebar"] span:not(.stButton span):not(button span),
-    [data-testid="stSidebar"] label,
-    [data-testid="stSidebar"] .stMarkdown,
-    [data-testid="stSidebar"] .stMarkdown p,
-    [data-testid="stSidebar"] .stMarkdown span,
-    [data-testid="stSidebar"] .stMarkdown div {
-        color: var(--text-primary) !important;
-    }
-    
-    /* Ensure text elements inherit proper color */
-    [data-testid="stSidebar"] .element-container,
-    [data-testid="stSidebar"] .block-container {
-        color: var(--text-primary) !important;
-    }
-    
-    /* Sidebar Caption Text */
-    [data-testid="stSidebar"] .stCaption,
-    [data-testid="stSidebar"] .stCaption * {
-        color: var(--text-secondary) !important;
-    }
-    
-    /* Sidebar Buttons - Must come after general text styles */
-    [data-testid="stSidebar"] .stButton > button {
-        width: 100%;
-        background-color: var(--background) !important;
-        color: var(--text-primary) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: var(--radius);
-        padding: 0.75rem 1rem;
-        font-weight: 400;
-        font-size: 0.875rem;
-        text-align: left;
-        margin-bottom: 0.5rem;
-        transition: all 0.2s ease;
-    }
-    
-    [data-testid="stSidebar"] .stButton > button span {
-        color: var(--text-primary) !important;
-    }
-    
-    [data-testid="stSidebar"] .stButton > button:hover {
-        background-color: var(--primary) !important;
-        border-color: var(--primary) !important;
-        transform: translateX(4px);
-    }
-    
-    [data-testid="stSidebar"] .stButton > button:hover span {
-        color: white !important;
-    }
-    
-    /* Sidebar Expanders */
-    [data-testid="stSidebar"] .streamlit-expanderHeader {
-        color: var(--text-primary) !important;
-        font-weight: 500;
-        background-color: transparent !important;
-    }
-    
-    [data-testid="stSidebar"] .streamlit-expanderHeader * {
-        color: var(--text-primary) !important;
-    }
-    
-    [data-testid="stSidebar"] .streamlit-expanderContent {
-        background-color: transparent !important;
-    }
-    
-    [data-testid="stSidebar"] .streamlit-expanderContent * {
-        color: var(--text-primary) !important;
-    }
-    
-    /* Expander when closed - ensure text is visible */
-    [data-testid="stSidebar"] .streamlit-expanderHeader:not([aria-expanded="true"]) {
-        color: var(--text-primary) !important;
-    }
-    
-    /* Expander when open - ensure proper contrast */
-    [data-testid="stSidebar"] .streamlit-expanderHeader[aria-expanded="true"] {
-        color: var(--text-primary) !important;
-        background-color: transparent !important;
-    }
-    
-    /* Expander content text */
-    [data-testid="stSidebar"] .streamlit-expanderContent p,
-    [data-testid="stSidebar"] .streamlit-expanderContent span,
-    [data-testid="stSidebar"] .streamlit-expanderContent div {
-        color: var(--text-primary) !important;
-        background-color: transparent !important;
-    }
-    
-    /* Sidebar text elements that might have default white color */
-    [data-testid="stSidebar"] .css-10trblm,
-    [data-testid="stSidebar"] [class*="css-"] {
-        color: var(--text-primary) !important;
-    }
-    
-    /* Force all sidebar text to be dark, but exclude buttons */
-    [data-testid="stSidebar"] *:not(.stButton):not(.stButton *):not(button):not(button *) {
-        color: var(--text-primary) !important;
-    }
-    
-    /* Override any Streamlit default colors */
-    [data-testid="stSidebar"] .element-container *,
-    [data-testid="stSidebar"] .block-container *,
-    [data-testid="stSidebar"] .stMarkdown * {
-        color: var(--text-primary) !important;
-    }
-    
-    /* Specific expander styling overrides */
-    [data-testid="stSidebar"] .streamlit-expander {
-        background-color: transparent !important;
-    }
-    
-    [data-testid="stSidebar"] .streamlit-expander .streamlit-expanderHeader {
-        color: var(--text-primary) !important;
-        background-color: transparent !important;
-    }
-    
-    [data-testid="stSidebar"] .streamlit-expander .streamlit-expanderContent {
-        color: var(--text-primary) !important;
-        background-color: transparent !important;
-    }
-    
-    /* Override any white text in expanders, but exclude buttons */
-    [data-testid="stSidebar"] .streamlit-expander *:not(.stButton):not(.stButton *):not(button):not(button *) {
-        color: var(--text-primary) !important;
-    }
-    
-    /* Specific fix for expander headers that might be white */
-    [data-testid="stSidebar"] .streamlit-expanderHeader,
-    [data-testid="stSidebar"] .streamlit-expanderHeader div,
-    [data-testid="stSidebar"] .streamlit-expanderHeader span {
-        color: var(--text-primary) !important;
-        background-color: transparent !important;
-    }
-    
-    /* Remove all hover effects from expander headers */
-    [data-testid="stSidebar"] .streamlit-expanderHeader:hover,
-    [data-testid="stSidebar"] .streamlit-expanderHeader:hover div,
-    [data-testid="stSidebar"] .streamlit-expanderHeader:hover span {
-        color: var(--text-primary) !important;
-        background-color: transparent !important;
-        transform: none !important;
-    }
-    
-    /* Keep expander headers consistent in all states */
-    [data-testid="stSidebar"] .streamlit-expanderHeader:focus,
-    [data-testid="stSidebar"] .streamlit-expanderHeader:active,
-    [data-testid="stSidebar"] .streamlit-expanderHeader[aria-expanded="true"] {
-        color: var(--text-primary) !important;
-        background-color: transparent !important;
-    }
-    
-    /* Override any Streamlit default hover/active states - keep consistent */
-    [data-testid="stSidebar"] .streamlit-expanderHeader:hover *,
-    [data-testid="stSidebar"] .streamlit-expanderHeader:focus *,
-    [data-testid="stSidebar"] .streamlit-expanderHeader:active * {
-        color: var(--text-primary) !important;
-    }
-    
-    /* Disable all transitions and hover effects */
-    [data-testid="stSidebar"] .streamlit-expanderHeader {
-        transition: none !important;
-    }
-    
-    [data-testid="stSidebar"] .streamlit-expanderHeader:hover {
-        background-color: transparent !important;
-        color: var(--text-primary) !important;
-        transform: none !important;
-        box-shadow: none !important;
-    }
-    
-    /* Remove all hover effects from database schema expanders specifically */
-    [data-testid="stSidebar"] .streamlit-expander:hover {
-        background-color: transparent !important;
-    }
-    
-    [data-testid="stSidebar"] .streamlit-expander:hover .streamlit-expanderHeader {
-        background-color: transparent !important;
-        color: var(--text-primary) !important;
-    }
-    
-    /* Override any Streamlit default expander hover states */
-    [data-testid="stSidebar"] .streamlit-expander *:hover {
-        background-color: transparent !important;
-        color: var(--text-primary) !important;
-    }
-    
-    /* Ensure no visual changes on any expander interaction */
-    [data-testid="stSidebar"] .streamlit-expanderHeader:focus,
-    [data-testid="stSidebar"] .streamlit-expanderHeader:active,
-    [data-testid="stSidebar"] .streamlit-expanderHeader:visited {
-        background-color: transparent !important;
-        color: var(--text-primary) !important;
-        outline: none !important;
-        box-shadow: none !important;
-    }
-    
-    /* Ensure expander content is always visible */
-    [data-testid="stSidebar"] .streamlit-expanderContent,
-    [data-testid="stSidebar"] .streamlit-expanderContent div,
-    [data-testid="stSidebar"] .streamlit-expanderContent span,
-    [data-testid="stSidebar"] .streamlit-expanderContent p {
-        color: var(--text-primary) !important;
-        background-color: transparent !important;
-    }
-    
-    /* Button Styling */
-    .stButton > button {
-        background-color: var(--primary);
-        color: white;
-        border: none;
-        border-radius: var(--radius);
-        padding: 0.625rem 1.5rem;
-        font-weight: 500;
-        font-size: 0.875rem;
-        transition: all 0.2s ease;
-        box-shadow: var(--shadow-sm);
-    }
-    
-    .stButton > button:hover {
-        background-color: var(--primary-dark);
-        box-shadow: var(--shadow-md);
-        transform: translateY(-1px);
-    }
-    
-    /* Text Area Styling */
-    .stTextArea textarea {
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        padding: 0.875rem;
-        font-size: 0.9375rem;
-        transition: all 0.2s ease;
-    }
-    
-    .stTextArea textarea:focus {
-        border-color: var(--primary);
-        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-    }
-    
-    /* Metric Cards */
-    [data-testid="stMetricValue"] {
-        font-size: 1.75rem;
-        font-weight: 600;
-        color: var(--text-primary);
-    }
-    
-    [data-testid="stMetricLabel"] {
-        font-size: 0.875rem;
-        font-weight: 500;
-        color: var(--text-secondary);
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-    }
-    
-    /* Info/Success/Error/Warning Boxes */
-    .stAlert {
-        border-radius: var(--radius);
-        border-left: 3px solid;
-        padding: 1rem;
-        margin: 1rem 0;
-    }
-    
-    div[data-baseweb="notification"] {
-        border-radius: var(--radius);
-    }
-    
-    /* Code Blocks */
-    .stCodeBlock {
-        border-radius: var(--radius);
-        border: 1px solid var(--border);
-    }
-    
-    /* Expander Styling */
-    .streamlit-expanderHeader {
-        font-weight: 500;
-        color: var(--text-primary);
-    }
-    
-    /* Selectbox Styling */
-    .stSelectbox label {
-        font-weight: 500;
-        color: var(--text-primary);
-        font-size: 0.875rem;
-        margin-bottom: 0.5rem;
-    }
-    
-    /* Dataframe Styling */
-    .dataframe {
-        border-radius: var(--radius);
-        overflow: hidden;
-    }
-    
-    /* Sidebar Dataframe Styling */
-    [data-testid="stSidebar"] .dataframe {
-        font-size: 0.8rem;
-        border: 1px solid var(--border);
-    }
-    
-    [data-testid="stSidebar"] .dataframe th {
-        background-color: var(--surface);
-        color: var(--text-primary);
-        font-weight: 600;
-        font-size: 0.75rem;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-    }
-    
-    [data-testid="stSidebar"] .dataframe td {
-        color: var(--text-primary);
-        background-color: var(--background);
-    }
-    
-    [data-testid="stSidebar"] .dataframe tr:nth-child(even) td {
-        background-color: var(--surface);
-    }
-    
-    /* ML Section Container */
-    .ml-section {
-        background-color: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        padding: 1.5rem;
-        margin: 2rem 0;
-    }
-    
-    /* Card Styling */
-    .info-card {
-        background-color: var(--background);
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        padding: 1.25rem;
-        margin: 1rem 0;
-        box-shadow: var(--shadow-sm);
-    }
-    
-    /* Divider */
-    hr {
-        border: none;
-        border-top: 1px solid var(--border);
-        margin: 2rem 0;
-    }
-    
-    /* Footer */
-    footer {
-        visibility: hidden;
-    }
-    
-    /* Custom Scrollbar */
-    ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
-    }
-    
-    ::-webkit-scrollbar-track {
-        background: var(--surface);
-    }
-    
-    ::-webkit-scrollbar-thumb {
-        background: var(--border);
-        border-radius: 4px;
-    }
-    
-    ::-webkit-scrollbar-thumb:hover {
-        background: var(--secondary);
-    }
-    
-    /* File Uploader Styling */
-    [data-testid="stFileUploader"],
-    [data-testid="stFileUploader"] > div {
-        border: 1px solid var(--border) !important;
-        border-radius: var(--radius) !important;
-        background-color: var(--background) !important;
-        color: var(--text-primary) !important;
-    }
-    
-    [data-testid="stFileUploader"] label,
-    [data-testid="stFileUploader"] p,
-    [data-testid="stFileUploader"] span,
-    [data-testid="stFileUploader"] div {
-        color: var(--text-primary) !important;
-        background-color: transparent !important;
-    }
-    
-    [data-testid="stFileUploader"] .uploadedFile {
-        background-color: var(--surface) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: var(--radius) !important;
-        color: var(--text-primary) !important;
-    }
-    
-    [data-testid="stFileUploader"] .uploadedFile * {
-        color: var(--text-primary) !important;
-    }
-    
-    [data-testid="stFileUploader"] .uploadedFile:hover {
-        background-color: var(--surface) !important;
-        border-color: var(--primary) !important;
-    }
-    
-    /* File uploader button styling */
-    [data-testid="stFileUploader"] button {
-        background-color: var(--primary) !important;
-        color: white !important;
-        border: none !important;
-    }
-    
-    [data-testid="stFileUploader"] button:hover {
-        background-color: var(--primary-dark) !important;
-    }
-    
-    /* Sidebar file uploader specific styling */
-    [data-testid="stSidebar"] [data-testid="stFileUploader"] {
-        background-color: var(--background) !important;
-        color: var(--text-primary) !important;
-    }
-    
-    [data-testid="stSidebar"] [data-testid="stFileUploader"] * {
-        color: var(--text-primary) !important;
-    }
-    
-    /* Override any Streamlit default dark styling for file uploader */
-    [data-testid="stSidebar"] [data-baseweb="file-uploader"],
-    [data-testid="stSidebar"] [data-baseweb="file-uploader"] * {
-        background-color: var(--background) !important;
-        color: var(--text-primary) !important;
-    }
-    
-    /* File uploader drag and drop area */
-    [data-testid="stFileUploader"] [data-baseweb="base-input"] {
-        background-color: var(--background) !important;
-        border-color: var(--border) !important;
-        color: var(--text-primary) !important;
-    }
-    
-    [data-testid="stFileUploader"] [data-baseweb="base-input"]::placeholder {
-        color: var(--text-secondary) !important;
-    }
-    
-    /* Query Output Styling */
-    .stCodeBlock {
-        background-color: var(--background) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: var(--radius) !important;
-    }
-    
-    .stCodeBlock code {
-        background-color: var(--background) !important;
-        color: var(--text-primary) !important;
-    }
-    
-    /* Dataframe output styling */
-    .dataframe {
-        background-color: var(--background) !important;
-        color: var(--text-primary) !important;
-    }
-    
-    .dataframe th {
-        background-color: var(--surface) !important;
-        color: var(--text-primary) !important;
-        border: 1px solid var(--border) !important;
-    }
-    
-    .dataframe td {
-        background-color: var(--background) !important;
-        color: var(--text-primary) !important;
-        border: 1px solid var(--border) !important;
-    }
-    
-    .dataframe tr:nth-child(even) td {
-        background-color: var(--surface) !important;
-    }
-    
-    /* Metric display styling */
-    [data-testid="stMetric"] {
-        background-color: var(--background) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: var(--radius) !important;
-        padding: 1rem !important;
-    }
-    
-    [data-testid="stMetricValue"] {
-        color: var(--text-primary) !important;
-    }
-    
-    [data-testid="stMetricLabel"] {
-        color: var(--text-secondary) !important;
-    }
-    
-    /* Alert boxes styling */
-    .stAlert {
-        background-color: var(--background) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: var(--radius) !important;
-        color: var(--text-primary) !important;
-    }
-    
-    .stSuccess {
-        background-color: #d4edda !important;
-        border-color: #c3e6cb !important;
-        color: #155724 !important;
-    }
-    
-    .stError {
-        background-color: #f8d7da !important;
-        border-color: #f5c6cb !important;
-        color: #721c24 !important;
-    }
-    
-    .stWarning {
-        background-color: #fff3cd !important;
-        border-color: #ffeaa7 !important;
-        color: #856404 !important;
-    }
-    
-    .stInfo {
-        background-color: #d1ecf1 !important;
-        border-color: #bee5eb !important;
-        color: #0c5460 !important;
-    }
-    
-    /* CRITICAL: Ensure info box text is visible with proper contrast */
-    .stInfo,
-    .stInfo *,
-    .stInfo p,
-    .stInfo span,
-    .stInfo div,
-    .stInfo strong,
-    .stInfo em,
-    .stInfo markdown,
-    .stInfo [class*="markdown"],
-    .stInfo [data-testid*="markdown"],
-    div[data-baseweb="notification"].stInfo,
-    div[data-baseweb="notification"].stInfo *,
-    div[data-baseweb="notification"].stInfo p,
-    div[data-baseweb="notification"].stInfo span,
-    div[data-baseweb="notification"].stInfo div,
-    .stInfo .stMarkdown,
-    .stInfo .stMarkdown *,
-    .stInfo .stMarkdown p,
-    .stInfo .stMarkdown span,
-    .stInfo .stMarkdown strong,
-    [class*="stInfo"] *,
-    [class*="stInfo"] p,
-    [class*="stInfo"] span,
-    [class*="stInfo"] strong {
-        color: #0c5460 !important;
-    }
-    
-    /* Database Management Section */
-    [data-testid="stSidebar"] .stMarkdown h3 {
-        color: var(--text-primary) !important;
-        margin-top: 1rem;
-        margin-bottom: 0.5rem;
-    }
-    
-    /* Force all sidebar elements to have proper colors */
-    [data-testid="stSidebar"] .element-container,
-    [data-testid="stSidebar"] .element-container * {
-        color: var(--text-primary) !important;
-        background-color: transparent !important;
-    }
-    
-    /* Sidebar info boxes */
-    [data-testid="stSidebar"] .stInfo,
-    [data-testid="stSidebar"] .stSuccess,
-    [data-testid="stSidebar"] .stWarning,
-    [data-testid="stSidebar"] .stError {
-        background-color: var(--surface) !important;
-        border: 1px solid var(--border) !important;
-        color: var(--text-primary) !important;
-    }
-    
-    /* Query results styling */
-    .main .stCodeBlock {
-        background-color: #f8f9fa !important;
-        border: 1px solid #dee2e6 !important;
-        color: #212529 !important;
-    }
-    
-    .main .stCodeBlock code {
-        background-color: #f8f9fa !important;
-        color: #212529 !important;
-    }
-    
-    /* IMPORTANT: Only set text colors where we KNOW the background is white/light */
-    /* NEVER override text in colored alert/info boxes */
-    
-    /* Basic headings in main content (white background) */
-    .main h1:not(.stAlert h1):not(.stInfo h1):not(.stSuccess h1):not(.stWarning h1):not(.stError h1),
-    .main h2:not(.stAlert h2):not(.stInfo h2):not(.stSuccess h2):not(.stWarning h2):not(.stError h2),
-    .main h3:not(.stAlert h3):not(.stInfo h3):not(.stSuccess h3):not(.stWarning h3):not(.stError h3) {
-        color: var(--text-primary) !important;
-    }
-    
-    /* Plain paragraphs in main content (white background) */
-    /* IMPORTANT: Exclude all alert/info box paragraphs to preserve their text colors */
-    .main p:not(.stAlert p):not(.stInfo p):not(.stSuccess p):not(.stWarning p):not(.stError p):not([class*="stInfo"] p):not([class*="stSuccess"] p):not([class*="stWarning"] p):not([class*="stError"] p) {
-        color: var(--text-primary) !important;
-    }
-    
-    /* Explicitly style info box content for visibility - higher specificity */
-    div.stInfo,
-    div.stInfo *,
-    div.stInfo p,
-    div.stInfo span,
-    div.stInfo div:not([class*="button"]),
-    div.stInfo strong,
-    div.stInfo em,
-    div.stInfo .stMarkdown,
-    div.stInfo .stMarkdown *,
-    div.stInfo .stMarkdown p,
-    div.stInfo .stMarkdown span,
-    div.stInfo .stMarkdown strong,
-    [class*="stInfo"] p,
-    [class*="stInfo"] span,
-    [class*="stInfo"] strong,
-    [class*="stInfo"] * {
-        color: #0c5460 !important;
-    }
-    
-    /* Additional selectors for Streamlit's internal structure - MUST come after all generic rules */
-    [data-baseweb="notification"],
-    [data-baseweb="notification"] p,
-    [data-baseweb="notification"] span,
-    [data-baseweb="notification"] div,
-    [data-baseweb="notification"] strong,
-    [data-baseweb="notification"] em,
-    [data-baseweb="notification"] * {
-        color: inherit !important;
-    }
-    
-    /* Final override: Force info box text color regardless of nesting level */
-    .main .stInfo,
-    .main .stInfo *,
-    .main .stInfo p,
-    .main .stInfo span,
-    .main .stInfo div,
-    .main .stInfo strong,
-    .main .stInfo em,
-    .main .stInfo .stMarkdown,
-    .main .stInfo .stMarkdown *,
-    .main .stInfo .stMarkdown p,
-    .main .stInfo .stMarkdown span,
-    .main .stInfo .stMarkdown strong,
-    .main [class*="stInfo"],
-    .main [class*="stInfo"] *,
-    .main [class*="stInfo"] p,
-    .main [class*="stInfo"] span,
-    .main [class*="stInfo"] strong,
-    .main div[data-baseweb="notification"],
-    .main div[data-baseweb="notification"] *,
-    .main div[data-baseweb="notification"] p,
-    .main div[data-baseweb="notification"] span,
-    .main div[data-baseweb="notification"] strong {
-        color: #0c5460 !important;
-    }
-    
-    /* Form labels (always on white background) */
-    .main .stTextInput > label,
-    .main .stTextArea > label,
-    .main .stSelectbox > label,
-    .main .stNumberInput > label {
-        color: var(--text-primary) !important;
-    }
-    
-    /* Input fields (white background) */
-    .main .stTextInput input,
-    .main .stTextArea textarea,
-    .main .stNumberInput input {
-        color: var(--text-primary) !important;
-        background-color: #ffffff !important;
-    }
-    
-    /* Selectbox (white background) */
-    .main .stSelectbox select {
-        color: var(--text-primary) !important;
-        background-color: #ffffff !important;
-    }
-    
-    /* Caption text (always light gray) */
-    .stCaption,
-    [data-testid="stCaption"] {
-        color: var(--text-secondary) !important;
-    }
-    
-    /* Code blocks (light gray background) */
-    .main .stCodeBlock code {
-        color: #212529 !important;
-        background-color: #f8f9fa !important;
-    }
-    
-    /* Plotly charts background */
-    .js-plotly-plot {
-        background-color: var(--background) !important;
-    }
-    
-    /* CRITICAL: Ensure sidebar expander hover fixes are preserved and not overridden by any generic rules */
-    /* These must come after generic rules to override them */
-    [data-testid="stSidebar"] .streamlit-expanderHeader {
-        background-color: transparent !important;
-        color: var(--text-primary) !important;
-        transition: none !important;
-    }
-    
-    [data-testid="stSidebar"] .streamlit-expanderHeader:hover {
-        background-color: transparent !important;
-        color: var(--text-primary) !important;
-        transform: none !important;
-        box-shadow: none !important;
-    }
-    
-    [data-testid="stSidebar"] .streamlit-expanderHeader:hover *,
-    [data-testid="stSidebar"] .streamlit-expanderHeader:hover div,
-    [data-testid="stSidebar"] .streamlit-expanderHeader:hover span {
-        background-color: transparent !important;
-        color: var(--text-primary) !important;
-        transform: none !important;
-    }
-    
-    [data-testid="stSidebar"] .streamlit-expander:hover {
-        background-color: transparent !important;
-    }
-    
-    [data-testid="stSidebar"] .streamlit-expander:hover .streamlit-expanderHeader,
-    [data-testid="stSidebar"] .streamlit-expander:hover .streamlit-expanderHeader * {
-        background-color: transparent !important;
-        color: var(--text-primary) !important;
-        transform: none !important;
-        box-shadow: none !important;
-    }
-    
-    [data-testid="stSidebar"] .streamlit-expander *:hover {
-        background-color: transparent !important;
-        color: var(--text-primary) !important;
-    }
-    
-    /* Buttons should have white text on primary background (main area) */
-    .main .stButton > button {
-        color: white !important;
-        background-color: var(--primary) !important;
-    }
-    
-    .main .stButton > button span {
-        color: white !important;
-    }
-    
-    /* Sidebar buttons should have dark text */
-    [data-testid="stSidebar"] .stButton > button {
-        color: var(--text-primary) !important;
-        background-color: var(--background) !important;
-    }
-    
-    [data-testid="stSidebar"] .stButton > button span {
-        color: var(--text-primary) !important;
-    }
-    
-    /* Primary buttons (type="primary") always white text */
-    button[kind="primary"],
-    .stButton > button[type="button"][kind="primary"] {
-        color: white !important;
-    }
-    
-    button[kind="primary"] span,
-    .stButton > button[type="button"][kind="primary"] span {
-        color: white !important;
-    }
-    
-    /* Additional headings (white background only) */
-    .main h4:not(.stAlert h4):not(.stInfo h4):not(.stSuccess h4):not(.stWarning h4):not(.stError h4),
-    .main h5:not(.stAlert h5):not(.stInfo h5):not(.stSuccess h5):not(.stWarning h5):not(.stError h5),
-    .main h6:not(.stAlert h6):not(.stInfo h6):not(.stSuccess h6):not(.stWarning h6):not(.stError h6) {
-        color: var(--text-primary) !important;
-    }
-    
-    /* Subheader text (gray for subtlety) */
-    .main .sub-header {
-        color: var(--text-secondary) !important;
-    }
-    
-    /* Input placeholders */
-    .main input::placeholder,
-    .main textarea::placeholder {
-        color: var(--text-secondary) !important;
-        opacity: 0.7 !important;
-    }
-    
-    /* Dataframes/tables (white background) */
-    .main .dataframe th,
-    .main .dataframe td {
-        color: var(--text-primary) !important;
-    }
-    
-    /* Remove Streamlit branding */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    
-    /* Highlight Box Styling */
-    .highlight-box {
-        background: linear-gradient(135deg, rgba(37, 99, 235, 0.08) 0%, rgba(37, 99, 235, 0.03) 100%);
-        border: 2px solid var(--primary);
-        border-radius: var(--radius);
-        padding: 1.25rem;
-        margin: 1rem 0;
-        box-shadow: 0 2px 8px rgba(37, 99, 235, 0.15);
-    }
-    
-    .highlight-box h3 {
-        color: var(--primary) !important;
-        margin-top: 0 !important;
-        margin-bottom: 1rem !important;
-    }
-    
-    /* Upload Section Container */
-    #upload-section-container {
-        background: linear-gradient(135deg, rgba(37, 99, 235, 0.08) 0%, rgba(37, 99, 235, 0.03) 100%);
-        border: 2px solid var(--primary);
-        border-radius: var(--radius);
-        padding: 1.25rem;
-        margin: 1rem 0;
-        box-shadow: 0 2px 8px rgba(37, 99, 235, 0.15);
-    }
-    
-    /* Style elements that follow the highlight box to appear inside it */
-    #upload-section-container ~ * {
-        background: linear-gradient(135deg, rgba(37, 99, 235, 0.05) 0%, rgba(37, 99, 235, 0.02) 100%) !important;
-        border-left: 2px solid var(--primary) !important;
-        border-right: 2px solid var(--primary) !important;
-        padding-left: 1.25rem !important;
-        padding-right: 1.25rem !important;
-        margin-left: 0 !important;
-        margin-right: 0 !important;
-    }
-    
-    /* Create closing border effect */
-    #upload-section-container ~ *:last-of-type::after {
-        content: '';
-        display: block;
-        height: 0;
-        border-bottom: 2px solid var(--primary);
-        margin-top: 1rem;
-        border-radius: 0 0 var(--radius) var(--radius);
-    }
-    
-    /* FINAL OVERRIDE: Force info box text visibility - MUST be last to override all other rules */
-    .main .element-container .stInfo,
-    .main .element-container .stInfo *,
-    .main .element-container .stInfo p,
-    .main .element-container .stInfo span,
-    .main .element-container .stInfo div,
-    .main .element-container .stInfo strong,
-    .main .element-container .stInfo em,
-    .main .element-container .stInfo .stMarkdown,
-    .main .element-container .stInfo .stMarkdown *,
-    .main .element-container .stInfo .stMarkdown p,
-    .main .element-container .stInfo .stMarkdown span,
-    .main .element-container .stInfo .stMarkdown strong,
-    .main [class*="stInfo"],
-    .main [class*="stInfo"] *,
-    .main [class*="stInfo"] p,
-    .main [class*="stInfo"] span,
-    .main [class*="stInfo"] strong,
-    .main div[data-baseweb="notification"].stInfo,
-    .main div[data-baseweb="notification"].stInfo *,
-    .main div[data-baseweb="notification"].stInfo p,
-    .main div[data-baseweb="notification"].stInfo span,
-    .main div[data-baseweb="notification"].stInfo strong,
-    .main div[data-baseweb="notification"].stInfo div {
-        color: #0c5460 !important;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Initialize session state
+# Session state initialization
 if 'db_manager' not in st.session_state:
     st.session_state.db_manager = None
-if 'nlp_processor' not in st.session_state:
-    st.session_state.nlp_processor = None
-if 'sql_generator' not in st.session_state:
-    st.session_state.sql_generator = None
-if 'ml_pipeline' not in st.session_state:
-    st.session_state.ml_pipeline = None
-if 'query_history' not in st.session_state:
-    st.session_state.query_history = []
-if 'current_results' not in st.session_state:
-    st.session_state.current_results = None
-if 'custom_db_uploaded' not in st.session_state:
-    st.session_state.custom_db_uploaded = False
-if 'custom_db_name' not in st.session_state:
-    st.session_state.custom_db_name = None
-if 'query_suggestions' not in st.session_state:
-    st.session_state.query_suggestions = []
-if 'schema_hash' not in st.session_state:
-    st.session_state.schema_hash = None
-if 'last_uploaded_file_id' not in st.session_state:
-    st.session_state.last_uploaded_file_id = None
+if 'schema_info' not in st.session_state:
+    st.session_state.schema_info = None
+if 'query_result' not in st.session_state:
+    st.session_state.query_result = None
+if 'llm_client' not in st.session_state:
+    st.session_state.llm_client = None
 
-def initialize_components():
-    """Initialize all components of the application."""
+
+def initialize_llm_client():
+    """Initialize LLM client with API key from config/session state."""
     try:
-        # Initialize database manager
-        if st.session_state.db_manager is None:
-            with st.spinner("Initializing database..."):
-                st.session_state.db_manager = DatabaseManager()
-        
-        # Get current database schema
-        if st.session_state.db_manager:
-            current_schema = st.session_state.db_manager.get_table_schema()
-            schema_info = {"tables": current_schema}
+        if st.session_state.llm_client is None:
+            # Get API key from session state (loaded from .env) or config
+            provider = st.session_state.get('llm_provider', config.llm_provider)
+            api_key = st.session_state.get('api_key', config.get_llm_api_key())
             
-            # Initialize or update NLP processor with current schema
-            if st.session_state.nlp_processor is None:
-                with st.spinner("Initializing NLP processor..."):
-                    st.session_state.nlp_processor = NLPProcessor(schema_info=schema_info)
-            else:
-                # Update schema if database changed
-                st.session_state.nlp_processor.update_schema(current_schema)
+            if not api_key:
+                return None
             
-            # Initialize SQL generator
-            if st.session_state.sql_generator is None:
-                st.session_state.sql_generator = SQLGenerator(st.session_state.nlp_processor)
-            else:
-                # Update schema in SQL generator
-                st.session_state.sql_generator.schema_info = st.session_state.nlp_processor.schema_info
+            st.session_state.llm_client = create_llm_client(provider=provider, api_key=api_key)
         
-        # Initialize ML pipeline
-        if st.session_state.ml_pipeline is None:
-            st.session_state.ml_pipeline = MLPipeline()
-        
-        return True
+        return st.session_state.llm_client
+    
     except Exception as e:
-        st.error(f"Failed to initialize components: {str(e)}")
-        return False
+        st.error(f"Failed to initialize LLM client: {e}")
+        return None
 
-def display_header():
-    """Display the application header."""
-    st.markdown('<h1 class="main-header">Speak2Data</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Transform natural language into actionable insights with automated SQL generation and machine learning analysis</p>', unsafe_allow_html=True)
 
-def display_sidebar():
-    """Display the sidebar with options and information."""
-    with st.sidebar:
-        st.markdown("## Navigation")
-        st.markdown("---")
-        
-        # Database Upload Section - Highlight Box
-        st.markdown("""
-        <div class="highlight-box">
-            <h3>🗄️ Database Management</h3>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # File uploader for custom database or data files
-        uploaded_file = st.file_uploader(
-            "Upload Database or Data File",
-            type=['db', 'sqlite', 'sqlite3', 'csv', 'xlsx', 'xls', 'parquet'],
-            help="Upload SQLite database (.db, .sqlite) or data files (.csv, .xlsx, .parquet) - will be automatically imported",
-            key="db_uploader"
+def sidebar_data_source():
+    """Sidebar section for data source configuration."""
+    st.sidebar.header("📁 Data Source")
+    
+    source_type = st.sidebar.radio(
+        "Choose data source:",
+        ["Upload File", "Database URL"],
+        key="source_type"
+    )
+    
+    if source_type == "Upload File":
+        uploaded_file = st.sidebar.file_uploader(
+            "Upload data file",
+            type=["csv", "xlsx", "xls", "db", "sqlite", "parquet"],
+            help="Upload a CSV, Excel, SQLite, or Parquet file"
         )
         
-        # Handle database or data file upload
         if uploaded_file is not None:
-            # Check if this is a new file (not already processed)
-            current_file_id = f"{uploaded_file.name}_{uploaded_file.size}"
+            # Save uploaded file temporarily
+            temp_path = config.temp_db_dir / uploaded_file.name
+            with open(temp_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
             
-            if st.session_state.get('last_uploaded_file_id') != current_file_id:
-                try:
-                    # Save uploaded file temporarily
-                    import tempfile
-                    import os
-                    
-                    file_extension = uploaded_file.name.split('.')[-1].lower()
-                    suffix = f'.{file_extension}'
-                    
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-                        tmp_file.write(uploaded_file.getvalue())
-                        temp_file_path = tmp_file.name
-                    
-                    # Initialize database manager based on file type
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    # Step 1: Load file
-                    status_text.text(f"📂 Loading file '{uploaded_file.name}'...")
-                    progress_bar.progress(20)
-                    
-                    # Determine file type and import accordingly
-                    if file_extension in ['db', 'sqlite', 'sqlite3']:
-                        st.session_state.db_manager = DatabaseManager(custom_db_path=temp_file_path)
-                    elif file_extension == 'csv':
-                        st.session_state.db_manager = DatabaseManager.create_from_csv(temp_file_path)
-                    elif file_extension in ['xlsx', 'xls']:
-                        st.session_state.db_manager = DatabaseManager.create_from_excel(temp_file_path)
-                    elif file_extension == 'parquet':
-                        st.session_state.db_manager = DatabaseManager.create_from_parquet(temp_file_path)
-                    else:
-                        st.error(f"❌ Unsupported file type: {file_extension}")
-                        progress_bar.empty()
-                        status_text.empty()
-                    
-                    if file_extension in ['db', 'sqlite', 'sqlite3', 'csv', 'xlsx', 'xls', 'parquet']:
-                        st.session_state.custom_db_uploaded = True
-                        st.session_state.custom_db_name = uploaded_file.name
-                        st.session_state.last_uploaded_file_id = current_file_id
-                        
-                        # Step 2: Get schema
-                        status_text.text("🔍 Analyzing database schema...")
-                        progress_bar.progress(40)
-                        
-                        # Clear cached suggestions to regenerate for new database
-                        st.session_state.query_suggestions = []
-                        st.session_state.schema_hash = None
-                        
-                        # Reset NLP processor and SQL generator to force reinitialization with new schema
-                        st.session_state.nlp_processor = None
-                        st.session_state.sql_generator = None
-                        
-                        # Get schema from new database
-                        if st.session_state.db_manager:
-                            current_schema = st.session_state.db_manager.get_table_schema()
-                            if current_schema:
-                                schema_info = {"tables": current_schema}
-                                
-                                # Step 3: Initialize NLP processor
-                                status_text.text("🤖 Initializing AI components...")
-                                progress_bar.progress(60)
-                                
-                                # Initialize NLP processor with new schema
-                                st.session_state.nlp_processor = NLPProcessor(schema_info=schema_info)
-                                
-                                # Initialize SQL generator
-                                st.session_state.sql_generator = SQLGenerator(st.session_state.nlp_processor)
-                                
-                                # Step 4: Generate query suggestions
-                                status_text.text("💡 Generating AI-powered query suggestions...")
-                                progress_bar.progress(80)
-                                
-                                # Generate new query suggestions immediately
-                                try:
-                                    if st.session_state.nlp_processor:
-                                        st.session_state.query_suggestions = st.session_state.nlp_processor._generate_fallback_suggestions(
-                                            current_schema, num_suggestions=6
-                                        )
-                                    else:
-                                        st.session_state.query_suggestions = _generate_basic_suggestions(current_schema)
-                                    st.session_state.schema_hash = hash(str(sorted(current_schema.items())))
-                                    
-                                    progress_bar.progress(100)
-                                    status_text.text("✅ Database loaded and ready!")
-                                    
-                                    st.success(f"✅ Database '{uploaded_file.name}' loaded successfully!")
-                                    st.info(f"📊 Found {len(current_schema)} tables: {', '.join(list(current_schema.keys())[:5])}{'...' if len(current_schema) > 5 else ''}")
-                                except Exception as e:
-                                    # Use basic suggestions if fallback fails
-                                    st.session_state.query_suggestions = _generate_basic_suggestions(current_schema)
-                                    st.session_state.schema_hash = hash(str(sorted(current_schema.items())))
-                            else:
-                                st.warning("⚠️ Database loaded but no tables found.")
-                        else:
-                            st.error("❌ Failed to load database.")
-                        
-                        progress_bar.empty()
-                        status_text.empty()
-                        
-                        # Only rerun once after successful load
-                        st.rerun()
-                    
-                except Exception as e:
-                    st.error(f"❌ Error loading database: {str(e)}")
-                    st.info("Using default database instead.")
-        
-        # Reset to default database option
-        if st.session_state.get('custom_db_uploaded', False):
-            if st.button("🔄 Reset to Default Database", use_container_width=True):
-                st.session_state.db_manager = DatabaseManager()
-                st.session_state.custom_db_uploaded = False
-                st.session_state.custom_db_name = None
-                
-                # Clear cached suggestions to regenerate for default database
-                st.session_state.query_suggestions = []
-                st.session_state.schema_hash = None
-                
-                # Reset NLP processor and SQL generator to force reinitialization with default schema
-                st.session_state.nlp_processor = None
-                st.session_state.sql_generator = None
-                
-                # Reinitialize components with default database
-                initialize_components()
-                st.rerun()
-        
-        # Show current database info
-        if st.session_state.get('custom_db_uploaded', False):
-            st.info(f"📁 Using: {st.session_state.custom_db_name}")
-        else:
-            st.info("📁 Using: Default business_data.db")
-        
-        st.markdown("---")
-        
-        # Database information
-        if st.session_state.db_manager:
-            st.markdown("### Database Schema")
-            schema = st.session_state.db_manager.get_table_schema()
-            for table, columns in schema.items():
-                with st.expander(f"{table} ({len(columns)} columns)", expanded=False):
-                    # Create a DataFrame for better table display
-                    import pandas as pd
-                    schema_df = pd.DataFrame({
-                        'Column Name': columns,
-                        'Data Type': ['TEXT'] * len(columns)  # Default type, could be enhanced
-                    })
-                    st.dataframe(
-                        schema_df,
-                        use_container_width=True,
-                        hide_index=True,
-                        height=min(300, (len(columns) + 1) * 35)  # Dynamic height based on rows
-                    )
-            st.markdown("---")
-        
-        # Query history moved to main area
-        
-        # Query history
-        if st.session_state.query_history:
-            st.markdown("### Recent Queries")
-            for i, query in enumerate(st.session_state.query_history[-5:]):
-                if st.button(f"{query[:45]}..." if len(query) > 45 else query, key=f"history_{i}", use_container_width=True):
-                    st.session_state.sample_query = query
-                    st.rerun()
-
-def generate_basic_explanation(results_df: pd.DataFrame) -> str:
-    """Generate a basic explanation when API is unavailable."""
-    if results_df.empty:
-        return "No data found matching your criteria."
-    
-    # Get basic stats
-    row_count = len(results_df)
-    col_count = len(results_df.columns)
-    
-    # Find numeric columns for analysis
-    numeric_cols = [col for col in results_df.columns if pd.api.types.is_numeric_dtype(results_df[col])]
-    
-    if numeric_cols:
-        # Calculate totals and averages for numeric columns
-        total_values = {}
-        avg_values = {}
-        for col in numeric_cols:
-            total_values[col] = results_df[col].sum()
-            avg_values[col] = results_df[col].mean()
-        
-        # Find the column with highest total
-        max_col = max(total_values.keys(), key=lambda k: total_values[k])
-        
-        explanation = f"**Data Summary:** Found {row_count:,} records with {col_count} columns. "
-        explanation += f"The {max_col} column shows the highest total value of {total_values[max_col]:,.0f}, "
-        explanation += f"with an average of {avg_values[max_col]:,.0f} per record. "
-        
-        if len(numeric_cols) > 1:
-            other_cols = [col for col in numeric_cols if col != max_col]
-            explanation += f"Other key metrics include {', '.join(other_cols[:2])}."
-    else:
-        # For non-numeric data
-        explanation = f"**Data Summary:** Retrieved {row_count:,} records with {col_count} columns: {', '.join(results_df.columns[:3])}"
-        if col_count > 3:
-            explanation += f" and {col_count-3} more columns."
-    
-    return explanation
-
-def process_query(user_query: str):
-    """Process user query and generate results."""
-    try:
-        # Validate input
-        if not user_query or not user_query.strip():
-            st.warning("Please enter a valid question.")
-            return
-        
-        # Store the user query for explanation
-        st.session_state.last_query = user_query.strip()
-        
-        # Clear sample query after processing
-        if 'sample_query' in st.session_state:
-            st.session_state.sample_query = None
-        
-        # Add to query history
-        if user_query not in st.session_state.query_history:
-            st.session_state.query_history.append(user_query)
-        
-        # Update schema before generating query to ensure we use the latest database schema
-        if st.session_state.db_manager:
-            current_schema = st.session_state.db_manager.get_table_schema()
-            schema_info = {"tables": current_schema}
-            
-            # Ensure NLP processor has the latest schema
-            if st.session_state.nlp_processor:
-                st.session_state.nlp_processor.update_schema(current_schema)
-                # Update SQL generator's schema reference
-                st.session_state.sql_generator.schema_info = st.session_state.nlp_processor.schema_info
-        
-        # Generate SQL query
-        with st.spinner("Analyzing your question..."):
             try:
-                # Ensure SQL generator is initialized
-                if not st.session_state.sql_generator:
-                    st.error("SQL Generator not initialized. Please refresh the page.")
-                    return
+                st.session_state.db_manager = DatabaseManager(temp_path)
+                st.sidebar.success(f"✅ Loaded: {uploaded_file.name}")
                 
-                query_result = st.session_state.sql_generator.generate_query(user_query)
+                # Get schema
+                st.session_state.schema_info = st.session_state.db_manager.get_schema()
                 
-                # Check if query_result is valid
-                if not query_result:
-                    st.error("Failed to generate query. Please try again.")
-                    return
-                    
             except Exception as e:
-                error_msg = str(e)
-                st.error(f"Query Analysis Error: {error_msg}")
-                
-                # Show helpful debugging info
-                with st.expander("🔍 Troubleshooting", expanded=True):
-                    st.write("**Error Details:**")
-                    st.code(error_msg, language=None)
+                st.sidebar.error(f"Error loading file: {e}")
+    
+    else:
+        db_url = st.sidebar.text_input(
+            "Database URL",
+            placeholder="sqlite:///path/to/db.db",
+            help="Enter database connection string"
+        )
+        
+        if st.sidebar.button("Connect"):
+            if db_url:
+                try:
+                    st.session_state.db_manager = DatabaseManager(db_url)
+                    st.sidebar.success("✅ Connected to database")
                     
-                    # Show current schema
-                    if st.session_state.db_manager:
-                        try:
-                            schema = st.session_state.db_manager.get_table_schema()
-                            st.write("**Current Database Schema:**")
-                            for table, cols in list(schema.items())[:3]:
-                                st.write(f"- **{table}**: {', '.join(cols[:5])}{'...' if len(cols) > 5 else ''}")
-                        except:
-                            st.write("Could not retrieve schema information")
+                    # Get schema
+                    st.session_state.schema_info = st.session_state.db_manager.get_schema()
                 
-                return
+                except Exception as e:
+                    st.sidebar.error(f"Connection failed: {e}")
+    
+    # Show schema if available
+    if st.session_state.schema_info:
+        st.sidebar.subheader("📋 Database Schema")
+        tables = st.session_state.db_manager.get_tables()
         
-        # Debug information
-        with st.expander("Debug Information", expanded=False):
-            st.write("**Parsed Query:**")
-            st.json(query_result.get("parsed_query", {}))
-            st.write("**Generated SQL:**")
-            st.code(query_result.get("sql_query", "No SQL generated"))
-            st.write("**Is Valid:**")
-            st.write(query_result.get("is_valid", False))
+        selected_table = st.sidebar.selectbox("Select table to view:", tables)
         
-        # Check if query has errors
-        if not query_result.get("is_valid", False):
-            error_msg = query_result.get('error', 'Invalid query generated')
-            st.error(f"Query Analysis Error: {error_msg}")
+        if selected_table:
+            table_info = st.session_state.db_manager.get_table_info(selected_table)
+            st.sidebar.write(f"**Rows:** {table_info['row_count']}")
+            st.sidebar.write(f"**Columns:** {table_info['column_count']}")
             
-            # Try to show what was generated anyway
-            if query_result.get("sql_query"):
-                st.info("Generated SQL (may have issues):")
-                st.code(query_result["sql_query"], language="sql")
-                
-                # Offer to try executing anyway
-                if st.button("⚠️ Try executing anyway (may fail)", key="force_execute"):
-                    # Continue to execution with potentially invalid query
-                    pass
-                else:
-                    return
-            else:
-                # If no SQL was generated, show schema info
-                with st.expander("📋 Current Database Schema", expanded=True):
-                    if st.session_state.db_manager:
-                        try:
-                            schema = st.session_state.db_manager.get_table_schema()
-                            if schema:
-                                for table_name, columns in schema.items():
-                                    st.markdown(f"**{table_name}**")
-                                    st.code(", ".join(columns), language=None)
-                                    st.markdown("---")
-                            else:
-                                st.warning("No tables found in database")
-                        except Exception as e:
-                            st.error(f"Error retrieving schema: {str(e)}")
-                return
+            with st.sidebar.expander("View columns"):
+                for col in table_info['columns']:
+                    st.write(f"• {col['name']} ({col['type']})")
+
+
+def sidebar_llm_config():
+    """Sidebar section for LLM configuration."""
+    st.sidebar.header("🤖 LLM Configuration")
+    
+    # Show current configuration from .env
+    st.sidebar.info(f"**Provider:** {config.llm_provider}\n\n**Model:** {config.get_llm_model_name()}")
+    
+    # Check if API key is loaded
+    api_key = config.get_llm_api_key()
+    if api_key:
+        st.sidebar.success("✅ API Key loaded from .env")
+        # Store in session state for LLM client
+        st.session_state.api_key = api_key
+        st.session_state.llm_provider = config.llm_provider
+    else:
+        st.sidebar.error("❌ No API key found in .env file")
+        st.sidebar.info("Add your API key to the .env file")
+    
+    # Optional: Allow override in UI (advanced users)
+    with st.sidebar.expander("⚙️ Override Configuration"):
+        provider = st.selectbox(
+            "LLM Provider:",
+            ["gemini", "openai", "anthropic"],
+            index=["gemini", "openai", "anthropic"].index(config.llm_provider)
+        )
         
-        # Display query information
-        st.subheader("Query Analysis")
+        st.session_state.llm_provider = provider
+        
+        # Model selection
+        model_options = {
+            "gemini": ["gemini-2.0-flash-exp", "gemini-1.5-flash", "gemini-1.5-pro"],
+            "openai": ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
+            "anthropic": ["claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"]
+        }
+        
+        selected_model = st.selectbox(
+            "Model:",
+            model_options.get(provider, []),
+            help="Select the model to use"
+        )
+        
+        if selected_model:
+            if provider == "gemini":
+                config.gemini_model = selected_model
+            elif provider == "openai":
+                config.openai_model = selected_model
+            elif provider == "anthropic":
+                config.anthropic_model = selected_model
+
+
+def sidebar_ml_config():
+    """Sidebar section for ML configuration."""
+    with st.sidebar.expander("⚙️ ML Configuration"):
+        config.test_size = st.slider(
+            "Test set size:",
+            0.1, 0.5, config.test_size,
+            help="Proportion of data for testing"
+        )
+        
+        config.missing_strategy = st.selectbox(
+            "Missing value strategy:",
+            ["drop", "impute"],
+            index=["drop", "impute"].index(config.missing_strategy)
+        )
+        
+        config.scaling_method = st.selectbox(
+            "Feature scaling:",
+            ["standard", "minmax", "robust", "none"],
+            index=["standard", "minmax", "robust", "none"].index(config.scaling_method)
+        )
+
+
+def main_query_interface():
+    """Main interface for natural language queries."""
+    st.title("📊 Speak2Data: Natural Language to Analytics & ML")
+    st.markdown("Ask questions about your data or request machine learning models in plain English.")
+    
+    # Check if data source and LLM are configured
+    if not st.session_state.db_manager:
+        st.warning("⚠️ Please configure a data source in the sidebar.")
+        return
+    
+    llm_client = initialize_llm_client()
+    if not llm_client:
+        st.warning("⚠️ Please configure LLM API key in the sidebar.")
+        return
+    
+    # Query input
+    query = st.text_area(
+        "Ask a question or request an analysis:",
+        height=100,
+        placeholder="Examples:\n- Show me monthly sales trends by region\n- Predict customer churn based on transaction history\n- Cluster patients into risk groups based on vitals",
+        help="Enter your question in natural language"
+    )
+    
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        run_button = st.button("🚀 Run Analysis", type="primary", use_container_width=True)
+    
+    if run_button and query:
+        run_analysis_pipeline(query, llm_client)
+
+
+def run_analysis_pipeline(query: str, llm_client):
+    """Execute the complete analysis pipeline."""
+    
+    # Create progress container
+    progress_container = st.container()
+    
+    with progress_container:
+        st.subheader("🔄 Analysis Progress")
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        try:
+            # Step 1: Task Understanding
+            status_text.text("1/7 Understanding task...")
+            progress_bar.progress(1/7)
+            
+            task_info = infer_task(query, st.session_state.schema_info, llm_client)
+            st.success(f"✅ Task identified: {task_info['task_type']}")
+            
+            # Step 2: SQL Generation
+            status_text.text("2/7 Generating SQL query...")
+            progress_bar.progress(2/7)
+            
+            sql, error = generate_sql_with_retry(
+                task_info,
+                st.session_state.schema_info,
+                st.session_state.db_manager,
+                llm_client
+            )
+            
+            if error:
+                st.warning(f"SQL generation warning: {error}")
+            
+            st.success("✅ SQL query generated")
+            
+            # Step 3: Data Extraction
+            status_text.text("3/7 Extracting data...")
+            progress_bar.progress(3/7)
+            
+            df = st.session_state.db_manager.run_query(sql)
+            st.success(f"✅ Retrieved {len(df)} rows, {len(df.columns)} columns")
+            
+            # Refine task understanding with actual columns
+            task_info = refine_task_understanding(task_info, list(df.columns), df)
+            
+            # Auto-suggest target column based on column names and query for supervised tasks
+            supervised_tasks = ['classification', 'regression', 'time_series_forecast']
+            if task_info['task_type'] in supervised_tasks and not task_info.get('target_column'):
+                # Try to infer from query and column names
+                query_lower = query.lower()
+                potential_targets = []
+                
+                # Look for keywords in query
+                predict_keywords = ['predict', 'forecast', 'estimate', 'classify', 'determine']
+                if any(keyword in query_lower for keyword in predict_keywords):
+                    # Check if any column name appears after these keywords
+                    for col in df.columns:
+                        if col.lower() in query_lower:
+                            potential_targets.append(col)
+                
+                # If still no target, suggest the last column or numeric columns
+                if not potential_targets:
+                    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+                    if numeric_cols:
+                        potential_targets = [numeric_cols[-1]]
+                    else:
+                        potential_targets = [df.columns[-1]]
+                
+                if potential_targets:
+                    task_info['target_column'] = potential_targets[0]
+            
+            # Step 4: Data Preprocessing
+            status_text.text("4/7 Preprocessing data...")
+            progress_bar.progress(4/7)
+            
+            # Get target column if needed for supervised tasks
+            target_column = task_info.get('target_column')
+            
+            supervised_tasks = ['classification', 'regression', 'time_series_forecast']
+            if task_info['task_type'] in supervised_tasks and not target_column:
+                # Ask user to select target
+                st.warning(f"⚠️ {task_info['task_type'].replace('_', ' ').title()} requires a target column")
+                target_column = st.selectbox(
+                    "Select target column for prediction:",
+                    options=df.columns.tolist(),
+                    help="Choose the column you want to predict"
+                )
+                
+                if target_column:
+                    task_info['target_column'] = target_column
+                else:
+                    st.error("Please select a target column to continue")
+                    return
+            
+            data_bundle = preprocess_data(
+                df,
+                task_info['task_type'],
+                target_column=target_column,
+                test_size=config.test_size,
+                random_state=config.random_state
+            )
+            
+            st.success("✅ Data preprocessed")
+            
+            # Step 5: Model Training
+            status_text.text("5/7 Training models...")
+            progress_bar.progress(5/7)
+            
+            pipeline_result = run_pipeline(task_info['task_type'], data_bundle)
+            
+            if pipeline_result.best_model_name != "None":
+                st.success(f"✅ Best model: {pipeline_result.best_model_name}")
+            else:
+                st.info("ℹ️ No model training required for this task")
+            
+            # Step 6: Visualization
+            status_text.text("6/7 Creating visualizations...")
+            progress_bar.progress(6/7)
+            
+            figures = create_visualizations(task_info['task_type'], data_bundle, pipeline_result)
+            st.success(f"✅ Created {len(figures)} visualizations")
+            
+            # Step 7: Logging
+            status_text.text("7/7 Logging experiment...")
+            progress_bar.progress(1.0)
+            
+            dataset_info = {
+                "rows": len(df),
+                "columns": len(df.columns),
+                "column_names": list(df.columns)
+            }
+            
+            metrics = pipeline_result.metrics_comparison.to_dict() if not pipeline_result.metrics_comparison.empty else None
+            
+            experiment_logger.log_experiment(
+                query=query,
+                task_type=task_info['task_type'],
+                task_understanding=task_info,
+                sql_query=sql,
+                dataset_info=dataset_info,
+                model_name=pipeline_result.best_model_name,
+                metrics=metrics,
+                config_dict=config.to_dict(),
+                success=True
+            )
+            
+            st.success("✅ Analysis complete!")
+            
+            # Store results in session state
+            st.session_state.query_result = {
+                'query': query,
+                'task_info': task_info,
+                'sql': sql,
+                'df': df,
+                'data_bundle': data_bundle,
+                'pipeline_result': pipeline_result,
+                'figures': figures
+            }
+            
+            # Clear progress
+            progress_container.empty()
+            
+            # Display results
+            display_results()
+        
+        except Exception as e:
+            st.error(f"❌ Error during analysis: {e}")
+            st.code(traceback.format_exc())
+            
+            # Log failed experiment
+            experiment_logger.log_experiment(
+                query=query,
+                error=str(e),
+                success=False
+            )
+
+
+def display_results():
+    """Display analysis results in tabs."""
+    if not st.session_state.query_result:
+        return
+    
+    result = st.session_state.query_result
+    
+    # Create tabs
+    tabs = st.tabs([
+        "📊 Overview",
+        "📄 Data Preview",
+        "🤖 Model & Metrics",
+        "📈 Visualizations",
+        "💡 LLM Explanation",
+        "📋 Experiment Log"
+    ])
+    
+    # Tab 1: Overview
+    with tabs[0]:
+        st.subheader("Analysis Overview")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Task Type", result['task_info']['task_type'].replace('_', ' ').title())
+        
+        with col2:
+            st.metric("Data Rows", len(result['df']))
+        
+        with col3:
+            if result['pipeline_result'].best_model_name != "None":
+                st.metric("Best Model", result['pipeline_result'].best_model_name)
+        
+        st.subheader("🎯 Task Understanding")
+        
+        # Display task info in a more visual way
+        task_info = result['task_info']
+        
+        st.markdown(f"**Task Type:** `{task_info['task_type'].replace('_', ' ').title()}`")
+        st.markdown(f"**Explanation:** {task_info.get('explanation', 'N/A')}")
+        
         col1, col2 = st.columns(2)
         
         with col1:
-            st.write("**Generated SQL:**")
-            st.code(query_result["sql_query"], language="sql")
+            if task_info.get('relevant_tables'):
+                st.markdown("**📊 Relevant Tables:**")
+                for table in task_info['relevant_tables']:
+                    st.markdown(f"- `{table}`")
+            
+            if task_info.get('target_column'):
+                st.markdown(f"**🎯 Target Column:** `{task_info['target_column']}`")
+            
+            if task_info.get('time_column'):
+                st.markdown(f"**📅 Time Column:** `{task_info['time_column']}`")
         
         with col2:
-            st.write("**Query Type:**")
-            st.info(query_result["query_type"])
+            if task_info.get('feature_columns'):
+                st.markdown("**🔧 Feature Columns:**")
+                for col in task_info['feature_columns'][:10]:
+                    st.markdown(f"- `{col}`")
+                if len(task_info['feature_columns']) > 10:
+                    st.markdown(f"*... and {len(task_info['feature_columns']) - 10} more*")
             
-            st.write("**Tables Used:**")
-            st.info(", ".join(query_result["tables_used"]))
+            if task_info.get('grouping'):
+                st.markdown("**📑 Grouping:**")
+                for group in task_info['grouping']:
+                    st.markdown(f"- `{group}`")
         
-        # Execute SQL query
-        with st.spinner("Executing query..."):
-            try:
-                # Validate SQL query exists
-                if not query_result.get("sql_query"):
-                    st.error("No SQL query was generated. Please try rephrasing your question.")
-                    return
-                
-                sql_query = query_result["sql_query"]
-                
-                # Validate database manager is available
-                if not st.session_state.db_manager:
-                    st.error("Database manager not initialized. Please refresh the page.")
-                    return
-                
-                # Show the generated SQL for debugging
-                with st.expander("Generated SQL Query", expanded=False):
-                    st.code(sql_query, language="sql")
-                    
-                    # Also show available tables/columns for reference
-                    try:
-                        schema = st.session_state.db_manager.get_table_schema()
-                        if schema:
-                            st.markdown("**Available Tables and Columns:**")
-                            for table, cols in list(schema.items())[:5]:
-                                st.text(f"{table}: {', '.join(cols[:5])}{'...' if len(cols) > 5 else ''}")
-                    except:
-                        pass
-                
-                # Execute the query
-                results_df = st.session_state.db_manager.execute_query(sql_query)
-                st.session_state.current_results = results_df
-                
-            except Exception as e:
-                error_msg = str(e)
-                st.error(f"Database Error: {error_msg}")
-                
-                # Show helpful suggestions with actual schema
-                try:
-                    schema = st.session_state.db_manager.get_table_schema()
-                    if schema:
-                        st.warning("**Please check your question and use tables/columns that exist in the database:**")
-                        
-                        # Show schema information in an expandable section
-                        with st.expander("📋 Available Database Schema", expanded=True):
-                            for table_name, columns in schema.items():
-                                st.markdown(f"**{table_name}**")
-                                st.code(", ".join(columns), language=None)
-                                st.markdown("---")
-                    else:
-                        st.warning("No tables found in the database. Please check your database file.")
-                except Exception as schema_err:
-                    st.warning(f"Could not retrieve database schema: {str(schema_err)}")
-                
-                # Show the SQL that failed
-                if query_result.get("sql_query"):
-                    with st.expander("❌ Failed SQL Query", expanded=False):
-                        st.code(query_result["sql_query"], language="sql")
-                
-                return
+        if task_info.get('filters'):
+            st.markdown(f"**🔍 Filters:** `{task_info['filters']}`")
         
-        # Check if results are empty
-        if results_df.empty:
-            st.info("No results found for your query.")
-            st.session_state.current_results = None
-            return
-        
-        # Store results in session state for display in main function
-        st.success(f"Query executed successfully. Found {len(results_df)} rows.")
-        st.rerun()  # Refresh to show results in main function
-    
-    except Exception as e:
-        st.error(f"Processing Error: {str(e)}")
-
-def _generate_basic_suggestions(schema: Dict[str, List[str]]) -> List[str]:
-    """Generate intelligent query suggestions customized to database schema.
-    
-    Args:
-        schema: Dictionary mapping table names to their column lists
-        
-    Returns:
-        List of suggested natural language queries tailored to actual data structure
-    """
-    suggestions = []
-    tables = list(schema.keys())
-    
-    if not tables:
-        return [
-            "Show me all available data",
-            "What tables exist in this database?",
-            "Display summary statistics"
-        ]
-    
-    # Analyze each table for intelligent suggestions
-    for table in tables:
-        columns = schema[table]
-        
-        # Categorize columns by type with expanded patterns
-        numeric_cols = [col for col in columns if any(term in col.lower() for term in 
-            ['amount', 'price', 'cost', 'value', 'quantity', 'total', 'revenue', 'sales', 'profit', 'count', 'number', 'sum', 'avg'])]
-        
-        categorical_cols = [col for col in columns if any(term in col.lower() for term in 
-            ['category', 'type', 'status', 'segment', 'class', 'group', 'name', 'title', 'city', 'state', 'region', 'country', 'department'])]
-        
-        date_cols = [col for col in columns if any(term in col.lower() for term in 
-            ['date', 'time', 'year', 'month', 'day', 'timestamp', 'created', 'updated'])]
-        
-        # Generate smart suggestions based on available column types
-        
-        # Aggregation queries (highest priority - most useful)
-        if numeric_cols and categorical_cols:
-            suggestions.append(f"Show total {numeric_cols[0]} by {categorical_cols[0]} in {table}")
-            if len(categorical_cols) > 1:
-                suggestions.append(f"Compare {numeric_cols[0]} across {categorical_cols[0]} and {categorical_cols[1]} in {table}")
-        
-        # Top N queries (very common business question)
-        if categorical_cols:
-            suggestions.append(f"What are the top 10 {categorical_cols[0]} in {table}?")
-        elif numeric_cols:
-            suggestions.append(f"Show top 10 records by {numeric_cols[0]} in {table}")
-        
-        # Time-based analysis
-        if date_cols and numeric_cols:
-            suggestions.append(f"Show {numeric_cols[0]} trends over {date_cols[0]} in {table}")
-        elif date_cols and categorical_cols:
-            suggestions.append(f"Show {categorical_cols[0]} distribution over {date_cols[0]} in {table}")
-        
-        # Statistical queries
-        if numeric_cols:
-            suggestions.append(f"What is the average {numeric_cols[0]} in {table}?")
-            if len(numeric_cols) > 1:
-                suggestions.append(f"Compare {numeric_cols[0]} vs {numeric_cols[1]} in {table}")
-        
-        # Count/distribution queries
-        if categorical_cols:
-            suggestions.append(f"How many records per {categorical_cols[0]} in {table}?")
-        
-        # Data overview
-        suggestions.append(f"Show me all data from {table} table")
-        
-        # Stop after generating enough suggestions
-        if len(suggestions) >= 12:  # Generate extras to pick best ones
-            break
-    
-    # Multi-table queries if multiple tables
-    if len(tables) > 1:
-        suggestions.append(f"Show data from {tables[0]} and {tables[1]} together")
-    
-    # Remove duplicates while preserving order
-    seen = set()
-    unique_suggestions = []
-    for s in suggestions:
-        s_lower = s.lower()
-        if s_lower not in seen:
-            seen.add(s_lower)
-            unique_suggestions.append(s)
-    
-    return unique_suggestions[:6]
-
-def main():
-    """Main application function."""
-    # Display header
-    display_header()
-    
-    # Initialize components
-    if not initialize_components():
-        st.stop()
-    
-    # Display sidebar
-    display_sidebar()
-    
-    # Main content area
-    st.subheader("Query Input")
-    
-    # Generate default query suggestions based on database schema
-    if st.session_state.db_manager:
-        # Get current schema
-        current_schema = st.session_state.db_manager.get_table_schema()
-        if current_schema:
-            schema_hash = hash(str(sorted(current_schema.items())))
-            
-            # Regenerate suggestions if schema changed or if not cached
-            if (st.session_state.get('schema_hash') != schema_hash or 
-                not st.session_state.query_suggestions or 
-                len(st.session_state.query_suggestions) == 0):
-                # Generate default suggestions based on schema
-                try:
-                    if st.session_state.nlp_processor:
-                        st.session_state.query_suggestions = st.session_state.nlp_processor._generate_fallback_suggestions(
-                            current_schema, num_suggestions=6
-                        )
-                    else:
-                        # If NLP processor not available, use basic suggestions
-                        st.session_state.query_suggestions = _generate_basic_suggestions(current_schema)
-                    st.session_state.schema_hash = schema_hash
-                except Exception as e:
-                    # Use basic suggestions if fallback fails
-                    st.session_state.query_suggestions = _generate_basic_suggestions(current_schema)
-                    st.session_state.schema_hash = schema_hash
-    
-    # Display query suggestions
-    if st.session_state.query_suggestions and len(st.session_state.query_suggestions) > 0:
-        st.markdown("#### 💡 Suggested Queries")
-        st.caption("Click any suggestion to use it in your query")
-        
-        # Display suggestions in a grid layout
-        cols = st.columns(3)
-        for idx, suggestion in enumerate(st.session_state.query_suggestions):
-            with cols[idx % 3]:
-                if st.button(
-                    suggestion, 
-                    key=f"suggest_{idx}", 
-                    use_container_width=True,
-                    help=f"Click to use: {suggestion}"
-                ):
-                    st.session_state.sample_query = suggestion
-                    st.rerun()
+        if task_info.get('aggregations'):
+            st.markdown("**📈 Aggregations:**")
+            agg_df = pd.DataFrame([
+                {"Column": k, "Function": v} 
+                for k, v in task_info['aggregations'].items()
+            ])
+            st.dataframe(agg_df, hide_index=True, use_container_width=True)
         
         st.markdown("---")
+        st.subheader("💾 Generated SQL Query")
+        st.code(result['sql'], language="sql")
     
-    # Check for sample query from sidebar or suggestions
-    if 'sample_query' in st.session_state and st.session_state.sample_query:
-        user_query = st.text_area(
-            "Enter your business question in natural language",
-            value=st.session_state.sample_query,
-            height=100,
-            help="Examples: 'Show me sales by category', 'Predict customer churn', 'What are the top products?'",
-            label_visibility="visible"
-        )
-        # Don't clear the sample query here - let it be processed first
-    else:
-        user_query = st.text_area(
-            "Enter your business question in natural language",
-            height=100,
-            help="Examples: 'Show me sales by category', 'Predict customer churn', 'What are the top products?'",
-            label_visibility="visible"
-        )
-    
-    # Process query button
-    if st.button("🔍 Analyze Query", type="primary", use_container_width=True):
-        if user_query.strip():
-            process_query(user_query.strip())
-        else:
-            st.warning("Please enter a question to analyze.")
-    
-    # Display current results if available
-    if st.session_state.current_results is not None:
-        results_df = st.session_state.current_results
+    # Tab 2: Data Preview
+    with tabs[1]:
+        st.subheader("📄 Data Preview")
         
-        # Display data summary
-        st.subheader("Results Summary")
+        # Show data shape
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Total Rows", f"{len(results_df):,}")
+            st.metric("Total Rows", len(result['df']))
         with col2:
-            st.metric("Total Columns", len(results_df.columns))
+            st.metric("Total Columns", len(result['df'].columns))
         with col3:
-            st.metric("Memory Usage", f"{results_df.memory_usage(deep=True).sum() / 1024:.1f} KB")
+            memory_mb = result['df'].memory_usage(deep=True).sum() / 1024 / 1024
+            st.metric("Memory Usage", f"{memory_mb:.2f} MB")
         
-        # Display data table
-        st.subheader("Data Table")
-        try:
-            # Add filters
-            filters = StreamlitHelpers.create_sidebar_filters(results_df)
-            filtered_results = StreamlitHelpers.apply_filters(results_df, filters)
-            
-            # Display filtered results
-            if not filtered_results.equals(results_df):
-                st.info(f"Showing {len(filtered_results)} filtered results out of {len(results_df)} total")
-            
-            StreamlitHelpers.display_dataframe(filtered_results)
-        except Exception as e:
-            st.warning(f"Could not apply filters: {str(e)}")
-            st.info("Displaying unfiltered results:")
-            StreamlitHelpers.display_dataframe(results_df)
+        st.markdown("---")
+        st.dataframe(result['df'].head(100), use_container_width=True)
         
-        # Generate visualizations
+        st.markdown("---")
+        st.subheader("📊 Column Statistics")
+        
+        stats = get_column_statistics(result['df'])
+        
+        # Create a more visual statistics display
+        stats_data = []
+        for col_name, col_stats in stats.items():
+            row = {
+                "Column": col_name,
+                "Type": col_stats['inferred_type'].title(),
+                "Missing": f"{col_stats['missing_percent']:.1f}%",
+                "Unique": col_stats['unique_count']
+            }
+            
+            if col_stats['inferred_type'] == 'numeric':
+                row['Min'] = f"{col_stats.get('min', 'N/A'):.2f}" if col_stats.get('min') is not None else 'N/A'
+                row['Max'] = f"{col_stats.get('max', 'N/A'):.2f}" if col_stats.get('max') is not None else 'N/A'
+                row['Mean'] = f"{col_stats.get('mean', 'N/A'):.2f}" if col_stats.get('mean') is not None else 'N/A'
+            elif col_stats['inferred_type'] == 'categorical':
+                top_values = col_stats.get('top_values', {})
+                if top_values:
+                    top_val = list(top_values.keys())[0]
+                    row['Top Value'] = f"{top_val} ({top_values[top_val]})"
+            
+            stats_data.append(row)
+        
+        stats_df = pd.DataFrame(stats_data)
+        st.dataframe(stats_df, hide_index=True, use_container_width=True)
+    
+    # Tab 3: Model & Metrics
+    with tabs[2]:
+        st.subheader("🤖 Model Performance")
+        
+        pipeline_result = result['pipeline_result']
+        
+        if pipeline_result.best_model_name != "None":
+            # Highlight best model
+            st.success(f"🏆 **Best Model:** {pipeline_result.best_model_name}")
+            
+            if not pipeline_result.metrics_comparison.empty:
+                st.markdown("---")
+                st.subheader("📊 Metrics Comparison")
+                
+                # Style the metrics dataframe
+                metrics_df = pipeline_result.metrics_comparison
+                
+                # Highlight the best model row
+                def highlight_best(row):
+                    if row['model'] == pipeline_result.best_model_name:
+                        return ['background-color: #d4edda'] * len(row)
+                    return [''] * len(row)
+                
+                styled_df = metrics_df.style.apply(highlight_best, axis=1).format({
+                    col: "{:.4f}" for col in metrics_df.columns if col != 'model'
+                })
+                
+                st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                
+                # Show metric cards for best model
+                st.markdown("---")
+                st.subheader("🎯 Best Model Metrics")
+                
+                best_metrics = metrics_df[metrics_df['model'] == pipeline_result.best_model_name].iloc[0].to_dict()
+                metric_cols = [col for col in best_metrics.keys() if col != 'model']
+                
+                cols = st.columns(min(len(metric_cols), 4))
+                for idx, metric in enumerate(metric_cols):
+                    with cols[idx % len(cols)]:
+                        st.metric(
+                            label=metric.replace('_', ' ').upper(),
+                            value=f"{best_metrics[metric]:.4f}"
+                        )
+            
+            if pipeline_result.feature_importances:
+                st.markdown("---")
+                st.subheader("🔍 Top Feature Importances")
+                
+                importance_df = pd.DataFrame([
+                    {"Feature": k, "Importance": v}
+                    for k, v in list(pipeline_result.feature_importances.items())[:10]
+                ])
+                
+                # Create a horizontal bar chart for better visualization
+                import plotly.graph_objects as go
+                fig = go.Figure(go.Bar(
+                    x=importance_df['Importance'],
+                    y=importance_df['Feature'],
+                    orientation='h',
+                    marker=dict(color='steelblue')
+                ))
+                fig.update_layout(
+                    title="Feature Importance",
+                    xaxis_title="Importance Score",
+                    yaxis_title="",
+                    height=400,
+                    yaxis=dict(autorange="reversed")
+                )
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("ℹ️ No model training required for this task type.")
+    
+    # Tab 4: Visualizations
+    with tabs[3]:
         st.subheader("Visualizations")
-        try:
-            # Auto-generate visualizations
-            figures = VisualizationGenerator.auto_visualize(results_df)
-            
-            if figures:
-                for i, fig in enumerate(figures):
-                    try:
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        # Add some spacing between charts
-                        if i < len(figures) - 1:
-                            st.markdown("---")
-                    except Exception as chart_error:
-                        st.warning(f"Could not display chart {i+1}: {str(chart_error)}")
-            else:
-                st.info("No suitable visualizations could be generated for this data.")
         
-        except Exception as e:
-            st.warning(f"Could not generate visualizations: {str(e)}")
+        figures = result['figures']
+        
+        if figures:
+            for name, fig in figures.items():
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No visualizations generated.")
+    
+    # Tab 5: LLM Explanation
+    with tabs[4]:
+        st.subheader("AI-Generated Explanation")
         
         # Generate explanation
-        st.subheader("🤖 AI-Powered Analysis")
         try:
-            # Get the actual user query from session state or use a default
-            user_query = st.session_state.get('last_query', 'data analysis')
-            
-            with st.spinner("Generating insights..."):
-                explanation = st.session_state.nlp_processor.explain_results(
-                    user_query, results_df, "sql"
-                )
-            
-            # Display explanation in a nice card
-            st.markdown(
-                f"""
-                <div style="background-color: #f0f8ff; padding: 20px; border-radius: 10px; border-left: 5px solid #1f77b4;">
-                    {explanation}
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-        except Exception as e:
-            error_str = str(e).lower()
-            if '429' in str(e) or 'quota' in error_str:
-                st.info("⚠️ API quota limit reached. Using basic analysis.")
+            llm_client = initialize_llm_client()
+            if llm_client:
+                explanation = generate_explanation(result, llm_client)
+                st.markdown(explanation)
             else:
-                st.warning(f"Could not generate AI explanation: {str(e)[:100]}")
-            # Provide a basic explanation as fallback
-            st.write(generate_basic_explanation(results_df))
-        
-        # Suggest follow-up questions
-        st.subheader("💭 Explore Further")
-        try:
-            user_query = st.session_state.get('last_query', 'data analysis')
-            
-            with st.spinner("Generating suggestions..."):
-                follow_up_questions = st.session_state.nlp_processor.suggest_follow_up_questions(
-                    user_query, results_df
-                )
-            
-            if follow_up_questions:
-                st.markdown("**Click any question below to explore:**")
-                
-                # Display as clickable pills/buttons
-                cols = st.columns(min(3, len(follow_up_questions)))
-                for i, question in enumerate(follow_up_questions):
-                    col_idx = i % len(cols)
-                    with cols[col_idx]:
-                        # Create a cleaner button appearance
-                        if st.button(
-                            f"❓ {question}", 
-                            key=f"followup_{i}", 
-                            use_container_width=True,
-                            help="Click to ask this question"
-                        ):
-                            st.session_state.sample_query = question
-                            st.rerun()
-            else:
-                st.info("No follow-up questions available.")
-                
+                st.warning("LLM client not available for explanation.")
         except Exception as e:
-            error_str = str(e).lower()
-            if '429' not in str(e) and 'quota' not in error_str:
-                st.warning(f"Could not generate follow-up questions: {str(e)[:100]}")
+            st.error(f"Failed to generate explanation: {e}")
+    
+    # Tab 6: Experiment Log
+    with tabs[5]:
+        st.subheader("📋 Recent Experiments")
         
-        # ML Analysis section
-        if len(results_df) > 10:  # Only show ML options for larger datasets
-            st.markdown("---")
-            st.markdown("### Machine Learning Analysis")
+        recent = experiment_logger.get_recent_experiments(20)
+        
+        if not recent.empty:
+            # Format the dataframe
+            recent['timestamp'] = pd.to_datetime(recent['timestamp']).dt.strftime('%Y-%m-%d %H:%M')
+            recent['task_type'] = recent['task_type'].str.replace('_', ' ').str.title()
+            recent['success'] = recent['success'].map({1: '✅', 0: '❌'})
             
-            # Create a modern container for ML section
-            with st.container():
-                st.markdown("""
-                <div class="ml-section">
-                    <h4 style="color: var(--text-primary); margin-bottom: 0.5rem;">Advanced Analytics</h4>
-                    <p style="color: var(--text-secondary); margin: 0;">Unlock insights with machine learning</p>
-                </div>
-                """, unsafe_allow_html=True)
+            # Rename columns for better display
+            recent = recent.rename(columns={
+                'id': 'ID',
+                'timestamp': 'Time',
+                'query': 'Query',
+                'task_type': 'Task Type',
+                'model_name': 'Model',
+                'success': 'Status'
+            })
+            
+            st.dataframe(recent, use_container_width=True, hide_index=True)
+        else:
+            st.info("No experiments logged yet.")
+        
+        st.markdown("---")
+        st.subheader("📊 Experiment Statistics")
+        stats = experiment_logger.get_experiment_statistics()
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Total Experiments", stats['total_experiments'])
+        
+        with col2:
+            st.metric("Success Rate", f"{stats['success_rate']:.1%}")
+        
+        with col3:
+            st.metric("Task Types", len(stats['by_task_type']))
+        
+        if stats['by_task_type']:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("##### 📑 Experiments by Task Type")
+                task_df = pd.DataFrame([
+                    {"Task Type": k.replace('_', ' ').title(), "Count": v}
+                    for k, v in stats['by_task_type'].items()
+                ])
                 
-                # Target column selection with modern styling
-                col1, col2 = st.columns([2, 1])
-                with col1:
-                    target_column = st.selectbox(
-                        "Select Target Variable",
-                        options=results_df.columns.tolist(),
-                        help="Choose the column you want to predict or analyze",
-                        key="ml_target_select"
-                    )
-                
-                with col2:
-                    st.markdown("#### Data Overview")
-                    st.metric("Samples", f"{len(results_df):,}")
-                    st.metric("Features", len(results_df.columns) - 1)
-                
-                if target_column:
-                    # Data type and analysis info
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        data_type = "Numeric" if pd.api.types.is_numeric_dtype(results_df[target_column]) else "Categorical"
-                        st.info(f"**Data Type:** {data_type}")
-                    with col2:
-                        unique_vals = results_df[target_column].nunique()
-                        st.info(f"**Unique Values:** {unique_vals}")
-                    with col3:
-                        missing_vals = results_df[target_column].isnull().sum()
-                        st.info(f"**Missing Values:** {missing_vals}")
+                import plotly.express as px
+                fig = px.bar(task_df, x='Count', y='Task Type', orientation='h',
+                            color='Count', color_continuous_scale='Blues')
+                fig.update_layout(showlegend=False, height=300)
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                if stats.get('top_models'):
+                    st.markdown("##### 🏆 Top Models Used")
+                    model_df = pd.DataFrame([
+                        {"Model": k, "Count": v}
+                        for k, v in stats['top_models'].items()
+                    ])
                     
-                    # ML Analysis button with modern styling
-                    if st.button("Run Machine Learning Analysis", type="primary", use_container_width=True):
-                        with st.spinner("Analyzing data and training model..."):
-                            try:
-                                # Analyze data
-                                analysis = st.session_state.ml_pipeline.analyze_data(results_df, target_column)
-                                
-                                # Display analysis in modern cards
-                                st.markdown("#### Data Analysis Results")
-                                
-                                # Analysis metrics in cards
-                                col1, col2, col3, col4 = st.columns(4)
-                                with col1:
-                                    st.metric("Problem Type", analysis.get("problem_type", "Unknown").title())
-                                with col2:
-                                    st.metric("Numeric Columns", len(analysis.get("numeric_columns", [])))
-                                with col3:
-                                    st.metric("Categorical Columns", len(analysis.get("categorical_columns", [])))
-                                with col4:
-                                    missing_pct = (results_df.isnull().sum().sum() / (len(results_df) * len(results_df.columns))) * 100
-                                    st.metric("Missing Data", f"{missing_pct:.1f}%")
-                                
-                                # Data quality recommendations
-                                if analysis.get("recommendations"):
-                                    st.markdown("#### Data Quality Recommendations")
-                                    for rec in analysis["recommendations"]:
-                                        st.warning(rec)
-                                
-                                # Prepare data
-                                features_df, target_series = st.session_state.ml_pipeline.prepare_data(
-                                    results_df, target_column
-                                )
-                                
-                                # Train model
-                                problem_type = analysis.get("problem_type", "regression")
-                                ml_results = st.session_state.ml_pipeline.train_model(
-                                    features_df, target_series, problem_type
-                                )
-                                
-                                if ml_results.get("training_successful", False):
-                                    st.success("Model trained successfully")
-                                    
-                                    # Display results in modern format
-                                    st.markdown("#### Model Performance")
-                                    
-                                    # Metrics in a nice layout
-                                    metrics = ml_results.get("metrics", {})
-                                    if metrics:
-                                        col1, col2, col3, col4 = st.columns(4)
-                                        metric_cols = list(metrics.keys())
-                                        
-                                        for i, (col, metric_key) in enumerate(zip([col1, col2, col3, col4], metric_cols[:4])):
-                                            with col:
-                                                value = metrics[metric_key]
-                                                if isinstance(value, float):
-                                                    st.metric(metric_key.replace("_", " ").title(), f"{value:.4f}")
-                                                else:
-                                                    st.metric(metric_key.replace("_", " ").title(), value)
-                                    
-                                    # Model summary in simple text format
-                                    st.markdown("#### Model Summary")
-                                    
-                                    summary = st.session_state.ml_pipeline.get_model_summary()
-                                    
-                                    # Create a modern info box for model summary
-                                    with st.container():
-                                        st.markdown("##### Model Configuration")
-                                    col1, col2 = st.columns(2)
-                                    
-                                    with col1:
-                                            st.text(f"Problem Type: {summary.get('problem_type', 'Unknown').title()}")
-                                            st.text(f"Model Type: {summary.get('model_type', 'Unknown').replace('_', ' ').title()}")
-                                            st.text(f"Target Column: {summary.get('target_column', 'Unknown')}")
-                                        
-                                    with col2:
-                                            st.text(f"Training Samples: {len(features_df):,}")
-                                            st.text(f"Features Count: {len(features_df.columns)}")
-                                            feature_cols = ', '.join(summary.get('feature_columns', [])[:5])
-                                            if len(summary.get('feature_columns', [])) > 5:
-                                                feature_cols += "..."
-                                            st.text(f"Features: {feature_cols}")
-                                    
-                                    # Additional model information
-                                    if summary.get('metrics'):
-                                        st.markdown("##### Model Performance Metrics")
-                                        metrics = summary.get('metrics', {})
-                                        metric_cols = st.columns(min(len(metrics), 4))
-                                        for idx, (metric_name, metric_value) in enumerate(metrics.items()):
-                                            with metric_cols[idx % len(metric_cols)]:
-                                                if isinstance(metric_value, float):
-                                                    st.metric(metric_name.replace("_", " ").title(), f"{metric_value:.4f}")
-                                                else:
-                                                    st.metric(metric_name.replace("_", " ").title(), metric_value)
-                                    
-                                    # Predictions visualization if available
-                                    predictions = ml_results.get("predictions", [])
-                                    if len(predictions) > 0:
-                                        st.markdown("#### Predictions Visualization")
-                                        
-                                        # Create a DataFrame for visualization
-                                        try:
-                                            # Ensure we have the same length for both arrays
-                                            min_len = min(len(target_series), len(predictions))
-                                            actual_vals = target_series.iloc[:min_len] if hasattr(target_series, 'iloc') else target_series[:min_len]
-                                            pred_vals = predictions[:min_len]
-                                            
-                                            pred_df = pd.DataFrame({
-                                                'Actual': actual_vals,
-                                                'Predicted': pred_vals
-                                            })
-                                        except Exception as e:
-                                            st.warning(f"Could not create predictions DataFrame: {str(e)}")
-                                            pred_df = pd.DataFrame()
-                                        
-                                        # Scatter plot for regression
-                                        if problem_type == "regression" and not pred_df.empty:
-                                            try:
-                                                import plotly.express as px
-                                                import plotly.graph_objects as go
-                                                
-                                                fig = px.scatter(
-                                                    pred_df, 
-                                                    x='Actual', 
-                                                    y='Predicted',
-                                                    title="Actual vs Predicted Values",
-                                                    labels={'Actual': 'Actual Values', 'Predicted': 'Predicted Values'}
-                                                )
-                                                
-                                                # Add perfect prediction line
-                                                min_val = float(pred_df['Actual'].min())
-                                                max_val = float(pred_df['Actual'].max())
-                                                fig.add_trace(go.Scatter(
-                                                    x=[min_val, max_val],
-                                                    y=[min_val, max_val],
-                                                    mode='lines',
-                                                    name='Perfect Prediction',
-                                                    line=dict(dash='dash', color='red')
-                                                ))
-                                                
-                                                fig.update_layout(showlegend=True)
-                                                st.plotly_chart(fig, use_container_width=True)
-                                            except Exception as e:
-                                                st.warning(f"Could not create scatter plot: {str(e)}")
-                                        
-                                        # Confusion matrix for classification
-                                        elif problem_type == "classification":
-                                            try:
-                                                from sklearn.metrics import confusion_matrix
-                                                import plotly.express as px
-                                                import plotly.graph_objects as go
-                                                
-                                                # Ensure we have the same length for both arrays
-                                                min_len = min(len(target_series), len(predictions))
-                                                y_true = target_series.iloc[:min_len] if hasattr(target_series, 'iloc') else target_series[:min_len]
-                                                y_pred = predictions[:min_len]
-                                                
-                                                cm = confusion_matrix(y_true, y_pred)
-                                                fig = px.imshow(
-                                                    cm, 
-                                                    text_auto=True,
-                                                    title="Confusion Matrix",
-                                                    labels=dict(x="Predicted", y="Actual")
-                                                )
-                                                st.plotly_chart(fig, use_container_width=True)
-                                            except Exception as e:
-                                                st.warning(f"Could not create confusion matrix: {str(e)}")
-                                    
-                                    # Feature importance if available
-                                    if hasattr(st.session_state.ml_pipeline, 'model') and st.session_state.ml_pipeline.model:
-                                        model = st.session_state.ml_pipeline.model
-                                        if hasattr(model, 'feature_importances_'):
-                                            try:
-                                                import plotly.express as px
-                                                
-                                                st.markdown("#### Feature Importance")
-                                                importance_df = pd.DataFrame({
-                                                    'Feature': features_df.columns,
-                                                    'Importance': model.feature_importances_
-                                                }).sort_values('Importance', ascending=True)
-                                                
-                                                fig = px.bar(
-                                                    importance_df, 
-                                                    x='Importance', 
-                                                    y='Feature',
-                                                    orientation='h',
-                                                    title="Feature Importance",
-                                                    color='Importance',
-                                                    color_continuous_scale='Viridis'
-                                                )
-                                                st.plotly_chart(fig, use_container_width=True)
-                                            except Exception as e:
-                                                st.warning(f"Could not create feature importance chart: {str(e)}")
-                                
-                                else:
-                                    st.error(f"ML Analysis failed: {ml_results.get('error', 'Unknown error')}")
-                                    
-                            except Exception as e:
-                                st.error(f"Error during ML analysis: {str(e)}")
-                
-                # Tips section with modern styling
-                st.markdown("#### Analysis Tips")
-                tip_col1, tip_col2, tip_col3 = st.columns(3)
-                
-                with tip_col1:
-                    st.markdown("""
-                    **Target Selection**
-                    - Choose numeric columns for regression
-                    - Choose categorical columns for classification
-                    - Ensure sufficient data quality
-                    """)
-                
-                with tip_col2:
-                    st.markdown("""
-                    **Data Quality**
-                    - More data = better models
-                    - Clean missing values first
-                    - Check for outliers
-                    """)
-                
-                with tip_col3:
-                    st.markdown("""
-                    **Model Types**
-                    - Regression: Predicting numbers
-                    - Classification: Predicting categories
-                    - Clustering: Finding patterns
-                    """)
+                    fig = px.pie(model_df, values='Count', names='Model',
+                                color_discrete_sequence=px.colors.sequential.RdBu)
+                    fig.update_layout(height=300)
+                    st.plotly_chart(fig, use_container_width=True)
+
+
+def generate_explanation(result: Dict[str, Any], llm_client) -> str:
+    """Generate natural language explanation of results."""
+    from pathlib import Path
+    
+    # Load prompt template
+    prompt_path = config.prompts_dir / "explanation_prompt.txt"
+    if prompt_path.exists():
+        prompt_template = prompt_path.read_text(encoding='utf-8')
+    else:
+        return "Explanation prompt not found."
+    
+    # Fill in template
+    task_info_str = str(result['task_info'])
+    dataset_info_str = f"Rows: {len(result['df'])}, Columns: {len(result['df'].columns)}"
+    
+    metrics_str = ""
+    if not result['pipeline_result'].metrics_comparison.empty:
+        metrics_str = result['pipeline_result'].metrics_comparison.to_string()
+    
+    feature_imp_str = ""
+    if result['pipeline_result'].feature_importances:
+        top_features = list(result['pipeline_result'].feature_importances.items())[:5]
+        feature_imp_str = ", ".join([f"{k}: {v:.3f}" for k, v in top_features])
+    
+    viz_str = ", ".join(result['figures'].keys())
+    
+    # Add prediction results for prediction tasks
+    predictions_str = ""
+    task_type = result['task_info']['task_type']
+    
+    if task_type in ['classification', 'regression', 'time_series_forecast'] and result['pipeline_result'].predictions is not None:
+        data_bundle = result['data_bundle']
+        predictions = result['pipeline_result'].predictions
+        
+        # Create predictions summary
+        if task_type == 'classification':
+            y_test = data_bundle.y_test
+            pred_df = pd.DataFrame({
+                'Actual': y_test.values,
+                'Predicted': predictions
+            })
+            predictions_str = f"\n\nPrediction Results (first 10):\n{pred_df.head(10).to_string()}\n"
+            
+            # Add class distribution
+            unique, counts = np.unique(predictions, return_counts=True)
+            pred_distribution = dict(zip(unique, counts))
+            predictions_str += f"\nPredicted Class Distribution: {pred_distribution}"
+            
+        elif task_type == 'regression':
+            y_test = data_bundle.y_test
+            pred_df = pd.DataFrame({
+                'Actual': y_test.values,
+                'Predicted': predictions,
+                'Error': y_test.values - predictions
+            })
+            predictions_str = f"\n\nPrediction Results (first 10):\n{pred_df.head(10).to_string()}\n"
+            predictions_str += f"\nPrediction Range: [{predictions.min():.2f}, {predictions.max():.2f}]"
+    
+    prompt = prompt_template.replace("{task_info}", task_info_str)
+    prompt = prompt.replace("{dataset_info}", dataset_info_str)
+    prompt = prompt.replace("{metrics}", metrics_str)
+    prompt = prompt.replace("{feature_importances}", feature_imp_str)
+    prompt = prompt.replace("{visualizations}", viz_str)
+    
+    # Add predictions section to prompt
+    if predictions_str:
+        prompt += predictions_str
+    
+    # Generate explanation
+    explanation = llm_client.complete(prompt, temperature=0.7)
+    
+    return explanation
+
+
+def main():
+    """Main application entry point."""
+    
+    # Sidebar
+    sidebar_data_source()
+    st.sidebar.markdown("---")
+    sidebar_llm_config()
+    st.sidebar.markdown("---")
+    sidebar_ml_config()
+    
+    # Main content
+    main_query_interface()
     
     # Footer
-    st.markdown("---")
-    st.markdown(
-        '<div style="text-align: center; color: var(--text-secondary); font-size: 0.875rem; padding: 1rem 0;">'
-        'Speak2Data · Powered by Google Gemini Pro · Built with Streamlit'
-        '</div>',
-        unsafe_allow_html=True
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### About")
+    st.sidebar.info(
+        "**Speak2Data** is a research-grade system for natural language to automated analytics and ML. "
+        "Built with Streamlit, SQLAlchemy, scikit-learn, and LLMs."
     )
+
 
 if __name__ == "__main__":
     main()

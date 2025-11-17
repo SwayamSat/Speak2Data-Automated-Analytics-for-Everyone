@@ -1,366 +1,296 @@
-# 📊 Speak2Data: Automated Analytics for Everyone
+# Speak2Data: Natural Language to Automated Analytics and ML
 
-Speak2Data is a **domain-free, schema-agnostic** data analysis platform that allows non-technical users to analyze ANY database by asking questions in natural language. The system automatically adapts to your database structure, interprets your questions, generates SQL queries, executes them, and can even build and run machine learning pipelines—all in one seamless flow.
+A research-grade, end-to-end system that transforms natural language queries into automated data analytics and machine learning pipelines.
 
-## ✨ Features
+## 🎯 Overview
 
-### Universal Database Support 🗄️
-- **Works with ANY sector**: Finance, Healthcare, Retail, HR, Manufacturing, IoT, Education, etc.
-- **Multiple file formats**: SQLite (.db), CSV (.csv), Excel (.xlsx, .xls), Parquet (.parquet)
-- **Automatic schema detection**: Discovers tables and columns dynamically
-- **Zero configuration**: Upload any database and start asking questions immediately
-- **No hardcoded assumptions**: Fully adapts to your data structure
+Speak2Data is a **schema-agnostic**, **database-independent** system that:
 
-### Intelligent Analysis 🤖
-- **Natural Language Processing**: Ask questions in plain English using Google Gemini Pro
-- **Automatic SQL Generation**: Converts your questions into optimized SQL queries for YOUR schema
-- **Smart Schema Awareness**: AI understands your specific tables and columns
-- **Context-aware suggestions**: Query suggestions tailored to your database structure
+1. Understands natural language queries about data
+2. Automatically generates SQL queries
+3. Extracts and preprocesses data
+4. Trains multiple ML models (classification, regression, clustering)
+5. Evaluates and compares models
+6. Creates interactive visualizations
+7. Logs all experiments for research analysis
 
-### Powerful Visualizations 📊
-- **Auto-generated charts**: Bar charts, line charts, scatter plots, heatmaps
-- **Interactive visualizations**: Powered by Plotly for dynamic data exploration
-- **Smart visualization selection**: Automatically chooses appropriate chart types
+**Key Features:**
+- 🧠 LLM-powered task understanding and SQL generation
+- 🔄 Support for multiple LLM providers (Gemini, OpenAI, Anthropic)
+- 📊 Works with any relational database (SQLite, PostgreSQL, MySQL, etc.)
+- 📁 Direct file upload support (CSV, Excel, SQLite, Parquet)
+- 🤖 Automated ML pipeline with model comparison
+- 📈 Rich interactive visualizations with Plotly
+- 📝 Complete experiment logging for research
+- 🎨 Clean, modular, extensible architecture
 
-### Machine Learning 🔮
-- **Domain-agnostic ML**: Works with any tabular data
-- **Automated pipelines**: Classification, regression, clustering
-- **No feature engineering required**: Automatically handles any column types
-- **Performance metrics**: R², RMSE, accuracy, and feature importance
-
-### User Experience ✨
-- **Real-time Data Analysis**: Instant results with comprehensive explanations
-- **User-friendly Interface**: Clean, modern Streamlit-based web application
-- **Sample Database**: Pre-loaded business data for testing and learning
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Python 3.8 or higher
-- Google Gemini Pro API key
-
-### Installation
-
-1. **Clone or download the project**
-   ```bash
-   git clone <repository-url>
-   cd NLPToSQL
-   ```
-
-2. **Create and activate virtual environment (Recommended)**
-   ```bash
-   # Create virtual environment
-   python -m venv nlpenv
-   
-   # Activate virtual environment
-   # On Windows:
-   nlpenv\Scripts\activate
-   # On macOS/Linux:
-   source nlpenv/bin/activate
-   
-   # Or use the provided scripts:
-   # Windows Command Prompt:
-   activate_env.bat
-   # Windows PowerShell:
-   .\activate_env.ps1
-   ```
-
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Set up environment variables**
-   - Copy `env_template.txt` to `.env`
-   - Add your Google Gemini Pro API key:
-   ```
-   GEMINI_API_KEY=your_gemini_api_key_here
-   DATABASE_URL=sqlite:///business_data.db
-   ```
-
-5. **Run the application**
-   ```bash
-   streamlit run app.py
-   ```
-
-6. **Open your browser**
-   - Navigate to `http://localhost:8501`
-   - Start asking questions!
-
-## 📋 Project Structure
+## 🏗️ Architecture
 
 ```
-NLPToSQL/
-├── app.py                 # Main Streamlit application
-├── nlp_module.py         # Natural language processing with Gemini Pro
-├── sql_generator.py      # SQL query generation
-├── ml_pipeline.py        # Machine learning pipeline
-├── db_module.py          # Database management and sample data
-├── utils.py              # Utility functions and helpers
-├── requirements.txt      # Python dependencies
-├── env_template.txt      # Environment variables template
-├── README.md            # This file
-└── database/            # Database files (auto-generated)
-    └── business_data.db
+Natural Language Query
+    ↓
+Task Understanding (LLM) → task_type, target, features
+    ↓
+SQL Generation (LLM) → SELECT query
+    ↓
+Data Extraction → pandas DataFrame
+    ↓
+Data Preprocessing → encoding, scaling, train/test split
+    ↓
+ML Pipeline → multiple models trained & evaluated
+    ↓
+Visualization → Plotly charts
+    ↓
+Interactive Dashboard (Streamlit)
 ```
 
-## 💡 Usage Examples
+## 📦 Installation
 
-### Example 1: Retail/E-commerce Database
-**Tables**: customers, orders, products, sales
-- "Show me the total sales by product category"
-- "What are the top 10 customers by order value?"
-- "Which products are most profitable?"
-- "Predict customer churn based on order history"
+### 1. Clone or download this project
 
-### Example 2: Healthcare Database
-**Tables**: patients, visits, medications, doctors
-- "Show me patient visit trends by month"
-- "What are the most prescribed medications?"
-- "Find patients with multiple visits this year"
-- "Analyze patient demographics by condition"
-
-### Example 3: Financial Database
-**Tables**: accounts, transactions, customers, loans
-- "What's the total transaction volume by account type?"
-- "Show me high-value transactions over $10,000"
-- "Analyze loan default rates by customer segment"
-- "Predict loan approval based on customer history"
-
-### Example 4: HR Database
-**Tables**: employees, departments, payroll, attendance
-- "Show me average salary by department"
-- "What's the attendance rate by employee?"
-- "Find employees with highest performance ratings"
-- "Analyze turnover rates across departments"
-
-### Example 5: IoT Sensor Database
-**Tables**: sensors, readings, locations, alerts
-- "Show me sensor readings over time"
-- "What are the average temperature readings by location?"
-- "Find sensors with abnormal readings"
-- "Predict sensor failures based on historical data"
-
-### Generic Queries (Work with Any Schema)
-- "Show me all tables and what data is available"
-- "What are the most common values in [column name]?"
-- "Give me a summary of the data"
-- "What patterns can you find?"
-- "Run machine learning analysis on this data"
-
-## 🔧 Technical Details
-
-### Architecture
-
-1. **Frontend**: Streamlit web application
-2. **NLP Engine**: Google Gemini Pro API for natural language understanding
-3. **Database**: SQLite with realistic business data
-4. **ML Pipeline**: Scikit-learn for automated machine learning
-5. **Visualization**: Plotly for interactive charts
-
-### Key Components
-
-- **NLPProcessor**: Parses natural language queries and extracts intent
-- **SQLGenerator**: Converts parsed queries into SQL statements
-- **MLPipeline**: Automated machine learning workflow
-- **DatabaseManager**: Handles database operations and sample data
-- **VisualizationGenerator**: Creates interactive charts and graphs
-
-### Schema-Agnostic Architecture
-
-The application automatically adapts to ANY database schema:
-
-**Default Sample Schema** (for testing):
-- **customers**: Customer information and segments
-- **products**: Product catalog with categories and pricing
-- **orders**: Order details and status
-- **order_items**: Individual items within orders
-- **sales**: Sales transactions with regional data
-
-**Your Custom Schema**:
-- Upload any database file
-- System automatically discovers all tables and columns
-- AI generates queries using YOUR exact schema
-- No configuration or setup required
-
-## 🛠️ Configuration
-
-### Environment Variables
-
-Create a `.env` file with the following variables:
-
-```env
-# Google Gemini API Configuration
-GEMINI_API_KEY=your_gemini_api_key_here
-
-# Database Configuration
-DATABASE_URL=sqlite:///business_data.db
+```bash
+cd "nl 2 sql"
 ```
 
-### API Key Setup
+### 2. Create virtual environment (recommended)
 
-1. Visit [Google AI Studio](https://makersuite.google.com/app/apikey)
-2. Create a new API key
-3. Add it to your `.env` file
+```bash
+python -m venv nlpenv
+nlpenv\Scripts\activate  # On Windows
+```
 
-## 🌍 Universal Database Support
+### 3. Install dependencies
 
-### Supported File Formats
+```bash
+pip install -r requirements.txt
+```
 
-Speak2Data works with multiple database and data file formats:
+### 4. Set up API keys
 
-#### 1. SQLite Databases (.db, .sqlite, .sqlite3)
-- Direct connection to existing SQLite databases
-- Works with any schema structure
-- Perfect for local development and testing
+Create a `.env` file or set environment variables:
 
-#### 2. CSV Files (.csv)
-- Automatically imported into SQLite
-- Table name derived from filename
-- Preserves column names and data types
+```bash
+# For Gemini
+GEMINI_API_KEY=your_gemini_key
 
-#### 3. Excel Files (.xlsx, .xls)
-- Imports first sheet or specified sheet
-- Handles multiple data types
-- Converts to SQLite for querying
+# For OpenAI
+OPENAI_API_KEY=your_openai_key
 
-#### 4. Parquet Files (.parquet)
-- Efficient columnar storage format
-- Fast import and query performance
-- Ideal for large datasets
+# For Anthropic
+ANTHROPIC_API_KEY=your_anthropic_key
 
-### How It Works
+# Choose default provider
+LLM_PROVIDER=gemini  # or openai, anthropic
+```
 
-1. **Upload any database file** through the web interface
-2. **Automatic schema detection** discovers all tables and columns
-3. **AI analyzes structure** and generates contextual query suggestions
-4. **Ask questions naturally** - the system understands YOUR data
-5. **Get instant insights** with SQL execution and visualizations
+## 🚀 Usage
 
-### Sample Data
+### Run the Streamlit app
 
-The application includes a pre-loaded business database for testing:
+```bash
+streamlit run app.py
+```
 
-- **1,000 customers** with demographic information
-- **200 products** across multiple categories
-- **5,000 orders** with various statuses
-- **10,000 sales records** with regional data
+### Basic workflow
 
-But you can replace this with ANY database from ANY domain!
+1. **Configure Data Source** (sidebar):
+   - Upload a file (CSV, Excel, SQLite, Parquet), OR
+   - Connect to a database URL
 
-## 🎯 Use Cases
+2. **Configure LLM** (sidebar):
+   - Select provider (Gemini, OpenAI, or Anthropic)
+   - Enter API key
+   - Choose model
 
-### Universal Data Analysis
-- **Any Industry**: Retail, Healthcare, Finance, HR, Manufacturing, Education, Government
-- **Any Data Source**: CRM, ERP, IoT sensors, transaction logs, survey data
-- **Any Question**: From simple counts to complex ML predictions
+3. **Ask a Question**:
+   - "Show me monthly sales trends by region"
+   - "Predict customer churn based on transaction history"
+   - "Cluster patients into risk groups based on vitals"
 
-### Business Analysts
-- Quick data exploration without SQL knowledge
-- Automated report generation across any domain
-- Trend analysis and forecasting for any metrics
+4. **View Results** in tabs:
+   - Overview: Task understanding & SQL
+   - Data Preview: Sample data & statistics
+   - Model & Metrics: Performance comparison
+   - Visualizations: Interactive charts
+   - LLM Explanation: AI-generated insights
+   - Experiment Log: All past experiments
 
-### Domain Experts
-- Medical researchers analyzing patient data
-- Financial analysts exploring transaction patterns
-- HR professionals reviewing employee metrics
-- Operations managers monitoring sensor data
+## 📂 Project Structure
 
-### Data Scientists
-- Rapid prototyping of ML models on new datasets
-- Automated feature engineering for any schema
-- Model performance evaluation across domains
+```
+nl 2 sql/
+├── app.py                      # Main Streamlit application
+├── config.py                   # Configuration management
+├── utils.py                    # Shared utilities
+├── db_manager.py              # Database connections & queries
+├── llm_client.py              # LLM abstraction layer
+├── llm_task_understanding.py  # Task inference from NL
+├── llm_sql_generator.py       # SQL generation with LLM
+├── data_preprocessing.py      # Data cleaning & encoding
+├── ml_pipeline.py             # Multi-model ML training
+├── visualization.py           # Plotly visualizations
+├── experiment_logging.py      # Experiment tracking
+├── prompts/                   # LLM prompt templates
+│   ├── task_understanding_prompt.txt
+│   ├── sql_generation_prompt.txt
+│   └── explanation_prompt.txt
+├── requirements.txt           # Python dependencies
+└── README.md                  # This file
+```
 
-## 🔍 Troubleshooting
+## 🎓 Supported Task Types
 
-### Common Issues
+1. **Descriptive Analytics**: Show data, statistics, distributions
+2. **Aggregation**: GROUP BY and aggregate functions
+3. **Classification**: Predict categorical targets (LogisticRegression, RandomForest, GradientBoosting)
+4. **Regression**: Predict numeric targets (LinearRegression, RandomForest, GradientBoosting)
+5. **Clustering**: Group similar records (KMeans, DBSCAN)
+6. **Time Series Forecast**: Predict future values
+7. **Comparison**: Compare groups or segments
+8. **Correlation Analysis**: Analyze relationships
 
-1. **API Key Error**
-   - Ensure your Gemini Pro API key is correctly set in `.env`
-   - Check that the API key has proper permissions
+## 🔬 Research Features
 
-2. **Database Connection Error**
-   - Verify that the database file is created properly
-   - Check file permissions in the project directory
+### Experiment Logging
 
-3. **Import Errors**
-   - Ensure all dependencies are installed: `pip install -r requirements.txt`
-   - Check Python version compatibility
+Every analysis is logged to `experiments.db` with:
+- Natural language query
+- Task understanding (JSON)
+- Generated SQL
+- Dataset information
+- Model names and metrics
+- Configuration used
+- Timestamp
 
-4. **Memory Issues**
-   - For large datasets, consider adding LIMIT clauses to queries
-   - Monitor system memory usage
+### Model Comparison
 
-### Getting Help
+For ML tasks, multiple models are trained and compared:
+- Classification: 3 models (Logistic, RandomForest, GradientBoosting)
+- Regression: 3 models (Linear, RandomForest, GradientBoosting)
+- Clustering: KMeans with multiple K values + DBSCAN
 
-- Check the error messages in the Streamlit interface
-- Review the console output for detailed error information
-- Ensure all environment variables are properly configured
+### Metrics Tracking
 
-## 🚀 Advanced Usage
+- **Classification**: Accuracy, Precision, Recall, F1, ROC-AUC
+- **Regression**: MAE, MSE, RMSE, R²
+- **Clustering**: Silhouette score, inertia
 
-### Working with Custom Databases
+### Schema-Agnostic Design
 
-1. **Prepare your database file**
-   - SQLite: Use existing .db file
-   - CSV: Export from Excel, database, or any data source
-   - Excel: Use .xlsx or .xls format
-   - Parquet: For large datasets
+No domain knowledge is hardcoded. The system works with:
+- Finance databases
+- Healthcare records
+- Retail data
+- E-commerce transactions
+- Any relational database with tables and columns
 
-2. **Upload through the web interface**
-   - Click "Upload Database or Data File"
-   - Select your file
-   - System automatically detects schema
+## 🔧 Configuration
 
-3. **Start asking questions**
-   - AI generates suggestions based on YOUR schema
-   - Use natural language with your own table/column names
-   - System adapts all queries to your structure
+Edit `config.py` or use environment variables to customize:
 
-### Best Practices
+```python
+# LLM settings
+LLM_PROVIDER=gemini
+GEMINI_MODEL=gemini-1.5-flash
 
-#### For Optimal Performance
-- Use specific column names in queries
-- Add appropriate filters to limit data size
-- For large CSV/Excel files, consider Parquet format
+# ML settings
+TEST_SIZE=0.2
+RANDOM_STATE=42
+CV_FOLDS=5
 
-#### For Better AI Understanding
-- Use descriptive table and column names
-- Keep naming conventions consistent
-- Avoid special characters in names
+# Preprocessing
+MISSING_STRATEGY=drop  # or impute
+CATEGORICAL_ENCODING=onehot  # or label
+SCALING_METHOD=standard  # or minmax, robust, none
+```
 
-#### For Machine Learning
-- Ensure sufficient data (>100 rows recommended)
-- Clean missing values when possible
-- Use numeric columns for regression predictions
+## 📊 Example Queries
 
-## 📈 Future Enhancements
+### Descriptive Analytics
+- "Show me the distribution of customer ages"
+- "What are the summary statistics for sales by region?"
 
-- Live database connections (PostgreSQL, MySQL, SQL Server)
-- More advanced ML algorithms and ensemble methods
-- Real-time data streaming capabilities
-- Custom dashboard creation and templates
-- Export functionality for reports and visualizations
-- Multi-table joins with automatic relationship detection
-- Data quality assessment and recommendations
+### Aggregation
+- "Calculate average order value by month"
+- "Count the number of transactions per customer"
+
+### Classification
+- "Predict whether a customer will churn based on their purchase history"
+- "Classify patients as high or low risk based on lab results"
+
+### Regression
+- "Predict house prices based on square footage and location"
+- "Estimate next month's revenue based on historical data"
+
+### Clustering
+- "Group customers into segments based on their behavior"
+- "Cluster products by sales patterns"
+
+## 🛠️ Extending the System
+
+### Add a new LLM provider
+
+1. Create a new client class in `llm_client.py`:
+```python
+class NewProviderClient(LLMClient):
+    def complete(self, prompt: str, **kwargs) -> str:
+        # Implementation
+```
+
+2. Update `create_llm_client()` factory function
+
+### Add a new ML model
+
+1. In `ml_pipeline.py`, add to the models dict:
+```python
+models = {
+    "YourModel": YourModelClass(params),
+    ...
+}
+```
+
+### Customize prompts
+
+Edit the prompt templates in `prompts/` directory to improve:
+- Task understanding accuracy
+- SQL generation quality
+- Result explanations
+
+## 📝 License
+
+This is a research and educational project.
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit issues, feature requests, or pull requests.
+This is designed as a complete research project. Feel free to:
+- Extend with new task types
+- Add more ML models
+- Improve prompts
+- Add new data sources
+- Enhance visualizations
 
-## 📄 License
+## 📧 Support
 
-This project is open source and available under the MIT License.
+For issues or questions about the implementation, refer to the code documentation and comments throughout the modules.
 
-## 🙏 Acknowledgments
+## 🎯 Research Applications
 
-- Google Gemini Pro for natural language processing
-- Streamlit for the web interface
-- Plotly for interactive visualizations
-- Scikit-learn for machine learning capabilities
-- SQLAlchemy for database operations
+Use this system to study:
+1. **Cross-domain generalization**: How well does NL→SQL work across different domains?
+2. **Task inference accuracy**: How often does the LLM correctly identify the task type?
+3. **Model selection strategies**: Which models perform best for different data characteristics?
+4. **Prompt engineering**: How do different prompts affect SQL quality and task understanding?
+5. **Automated ML**: Can LLMs enable fully automated data science pipelines?
+
+## 🔍 Next Steps
+
+1. Run the app with sample data
+2. Try different query types
+3. Explore the experiment log
+4. Customize prompts for your domain
+5. Add domain-specific models or preprocessing
+6. Analyze experiment data for research insights
 
 ---
 
-**Speak2Data** - Making data analysis accessible to everyone through natural language! 🚀
+**Built with:** Streamlit • SQLAlchemy • scikit-learn • Plotly • Google Gemini / OpenAI / Anthropic
