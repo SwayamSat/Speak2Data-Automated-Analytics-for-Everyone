@@ -685,7 +685,7 @@ def display_results():
             with col1:
                 st.markdown("##### 📑 Experiments by Task Type")
                 task_df = pd.DataFrame([
-                    {"Task Type": k.replace('_', ' ').title(), "Count": v}
+                    {"Task Type": (k.replace('_', ' ').title() if k else "Unknown"), "Count": v}
                     for k, v in stats['by_task_type'].items()
                 ])
                 
