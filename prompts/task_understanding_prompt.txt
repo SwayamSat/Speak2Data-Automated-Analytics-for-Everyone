@@ -26,10 +26,16 @@ Task type definitions:
 
 Important guidelines:
 - Be specific about which tables and columns are relevant
+- Use EXACT column names from the schema (case-sensitive)
 - For ML tasks (classification, regression, clustering), identify potential target and feature columns
 - Extract any filtering conditions from the query
 - If the query is ambiguous, make reasonable assumptions based on the schema
 - Focus on the user's intent rather than exact wording
+- If user wants to "see" or "show" data, it's descriptive_analytics
+- If user wants to "analyze", "predict", or "forecast", choose appropriate ML task type
+- For aggregation tasks, specify which columns to aggregate and the function (SUM, COUNT, AVG, MAX, MIN)
+- For grouping, specify which columns to group by
+- Ensure feature_columns lists actual columns that exist in the schema
 
 Database Schema:
 {schema}

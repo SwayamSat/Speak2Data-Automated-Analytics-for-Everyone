@@ -34,9 +34,12 @@ def get_default_sql_generation_prompt() -> str:
 CRITICAL REQUIREMENTS:
 1. Generate ONLY SELECT queries - no INSERT, UPDATE, DELETE, DROP, CREATE, ALTER, or TRUNCATE
 2. Use standard SQL compatible with SQLite, PostgreSQL, and MySQL
-3. Use proper table and column names from the schema
-4. Include appropriate WHERE, GROUP BY, ORDER BY, and LIMIT clauses as needed
-5. Return ONLY the SQL query, no explanations or markdown
+3. Use EXACT table and column names from the schema (case-sensitive)
+4. When selecting columns, use the actual column names from the schema
+5. If columns list shows "*", select all columns using SELECT * FROM table_name
+6. Include appropriate WHERE, GROUP BY, ORDER BY clauses as needed
+7. Add LIMIT clause to prevent returning too many rows (default LIMIT 10000)
+8. Return ONLY the SQL query, no explanations or markdown
 
 Database Schema:
 {schema}
@@ -50,6 +53,12 @@ Generate a SQL query that:
 - Applies filters: {filters}
 - Groups by: {grouping}
 - Applies aggregations: {aggregations}
+
+IMPORTANT:
+- Verify all column names exist in the schema
+- If aggregations are specified, use GROUP BY for non-aggregated columns
+- Ensure the query returns actual data, not NULL values
+- Order results logically (by time column if available)
 
 Return ONLY the SQL query."""
 
@@ -82,22 +91,48 @@ def generate_sql(
     # Extract task details
     tables = task_info.get("relevant_tables", [])
     
+    # If no tables specified, get the first table from schema
+    if not tables and schema_info:
+        tables = list(schema_info.keys())[:1]
+    
     # Determine columns to select
     columns = []
-    if task_info.get("target_column"):
-        columns.append(task_info["target_column"])
-    if task_info.get("feature_columns"):
-        columns.extend(task_info["feature_columns"])
-    if task_info.get("time_column"):
+    
+    # Add grouping columns first (they must be in SELECT if using GROUP BY)
+    grouping = task_info.get("grouping", [])
+    if grouping:
+        columns.extend(grouping)
+    
+    # Add aggregation columns
+    aggregations = task_info.get("aggregations", {})
+    if aggregations:
+        for col, agg_func in aggregations.items():
+            if col not in columns:
+                columns.append(f"{agg_func}({col})")
+    
+    # Add time column if specified
+    if task_info.get("time_column") and task_info["time_column"] not in columns:
         columns.append(task_info["time_column"])
     
-    # If no columns specified, use all
+    # Add target column if specified
+    if task_info.get("target_column") and task_info["target_column"] not in columns:
+        columns.append(task_info["target_column"])
+    
+    # Add feature columns
+    if task_info.get("feature_columns"):
+        for col in task_info["feature_columns"]:
+            if col not in columns and not any(f"({col})" in c for c in columns):
+                columns.append(col)
+    
+    # If still no columns specified, use all columns from the first table
     if not columns:
-        columns = ["*"]
+        if tables and tables[0] in schema_info:
+            table_columns = [col["name"] for col in schema_info[tables[0]]]
+            columns = table_columns if table_columns else ["*"]
+        else:
+            columns = ["*"]
     
     filters = task_info.get("filters", "None")
-    grouping = task_info.get("grouping", [])
-    aggregations = task_info.get("aggregations", {})
     
     # Fill in template
     prompt = prompt_template.replace("{schema}", schema_str)
@@ -132,6 +167,49 @@ def generate_sql(
     
     except Exception as e:
         raise RuntimeError(f"SQL generation failed: {str(e)}")
+
+
+def validate_sql_columns(sql: str, schema_info: Dict[str, List[Dict[str, str]]]) -> tuple[bool, str]:
+    """
+    Validate that SQL query references valid columns from the schema.
+    
+    Args:
+        sql: SQL query to validate
+        schema_info: Database schema information
+        
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    import re
+    
+    # Get all column names from schema
+    all_columns = set()
+    for table_name, columns in schema_info.items():
+        for col in columns:
+            all_columns.add(col["name"].lower())
+    
+    # Extract column references from SQL (simplified)
+    # Look for SELECT columns
+    select_match = re.search(r'SELECT\s+(.*?)\s+FROM', sql, re.IGNORECASE | re.DOTALL)
+    if select_match:
+        select_clause = select_match.group(1)
+        
+        # Skip if SELECT *
+        if '*' in select_clause:
+            return True, ""
+        
+        # Extract column names (basic parsing)
+        # This won't catch all cases but helps with common issues
+        columns_in_query = re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', select_clause)
+        
+        # Check if at least some columns are valid
+        valid_cols = [col for col in columns_in_query if col.lower() in all_columns]
+        
+        if not valid_cols and columns_in_query:
+            # None of the columns match - might be a problem
+            return False, f"No valid columns found in SELECT clause. Available columns: {', '.join(sorted(all_columns))}"
+    
+    return True, ""
 
 
 def fix_sql_error(
@@ -226,10 +304,25 @@ def generate_sql_with_retry(
     # Generate initial SQL
     sql = generate_sql(task_info, schema_info, llm_client)
     
+    # Validate column references before execution
+    is_valid, validation_error = validate_sql_columns(sql, schema_info)
+    if not is_valid:
+        print(f"SQL validation warning: {validation_error}")
+        # Try to fix using the validation error
+        try:
+            sql = fix_sql_error(sql, validation_error, schema_info, llm_client)
+        except Exception as e:
+            print(f"Could not fix validation error: {e}")
+    
     for attempt in range(max_retries):
         try:
             # Test the query
-            _ = db_manager.run_query(sql)
+            result = db_manager.run_query(sql)
+            
+            # Check if query returned empty or all-null data
+            if len(result) == 0:
+                raise RuntimeError("Query returned no rows. The data might not exist or filters are too restrictive.")
+            
             # Success!
             return sql, None
         

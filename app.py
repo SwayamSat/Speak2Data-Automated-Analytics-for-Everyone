@@ -491,6 +491,22 @@ def display_results():
         st.markdown("---")
         st.subheader("💾 Generated SQL Query")
         st.code(result['sql'], language="sql")
+        
+        st.markdown("---")
+        st.subheader("📋 Query Result")
+        
+        # Show result metrics
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Rows Returned", len(result['df']))
+        with col2:
+            st.metric("Columns", len(result['df'].columns))
+        
+        # Display the query result
+        st.dataframe(result['df'].head(50), use_container_width=True)
+        
+        if len(result['df']) > 50:
+            st.info(f"Showing first 50 rows of {len(result['df'])} total rows. See 'Data Preview' tab for more.")
     
     # Tab 2: Data Preview
     with tabs[1]:
