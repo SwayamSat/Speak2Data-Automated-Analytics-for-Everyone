@@ -85,10 +85,18 @@ def handle_missing_values(
         Tuple of (cleaned DataFrame, dict of imputers)
     """
     imputers = {}
+    original_rows = len(df)
     
     if strategy == "drop":
         # Drop rows with any missing values
         df = df.dropna()
+        
+        # Check if we removed too many rows
+        if len(df) == 0:
+            raise ValueError(f"All {original_rows} rows contain missing values. Consider using strategy='impute' instead of 'drop'.")
+        
+        if len(df) < original_rows * 0.1:  # Lost more than 90% of data
+            print(f"Warning: Dropped {original_rows - len(df)} rows ({(1 - len(df)/original_rows)*100:.1f}% of data) due to missing values. Consider using imputation.")
     
     elif strategy == "impute":
         column_types = identify_column_types(df)
@@ -188,6 +196,14 @@ def scale_features(
     else:
         return df, None
     
+    # Validate before scaling
+    if len(df) == 0:
+        raise ValueError("Cannot scale features: dataframe has 0 rows")
+    
+    if len(numeric_columns) == 0 or df[numeric_columns].shape[1] == 0:
+        # No numeric columns to scale
+        return df, None
+    
     df[numeric_columns] = scaler.fit_transform(df[numeric_columns])
     
     return df, scaler
@@ -258,25 +274,83 @@ def preprocess_for_supervised(
     if target_column not in df.columns:
         raise ValueError(f"Target column '{target_column}' not found in DataFrame")
     
+    # Check minimum data size
+    min_samples = max(10, int(1 / test_size) + 2)  # At least enough for train/test split
+    if len(df) < min_samples:
+        raise ValueError(f"Not enough data for supervised learning. Need at least {min_samples} rows, got {len(df)}")
+    
     # Separate target
     y = df[target_column]
     X = df.drop(columns=[target_column])
     
+    print(f"DEBUG: After separating target - X shape: {X.shape}, X columns: {list(X.columns)}")
+    print(f"DEBUG: y shape: {y.shape}, y name: {y.name}")
+    
+    # Check if we have any features
+    if X.shape[1] == 0:
+        raise ValueError(f"No feature columns found after removing target '{target_column}'. The dataset only contains the target column.")
+    
+    # Check if target has enough variation
+    if y.nunique() < 2:
+        raise ValueError(f"Target column '{target_column}' has insufficient variation (only {y.nunique()} unique value(s))")
+    
     original_columns = list(df.columns)
     
-    # Handle missing values
-    X, imputers = handle_missing_values(X, strategy=config.missing_strategy)
+    # Handle missing values with fallback
+    try:
+        X, imputers = handle_missing_values(X, strategy=config.missing_strategy)
+    except ValueError as e:
+        if "All" in str(e) and "rows contain missing values" in str(e):
+            # Fallback to imputation
+            print(f"Warning: {e}. Falling back to imputation strategy.")
+            X, imputers = handle_missing_values(X, strategy="impute")
+        else:
+            raise
+    
+    # Check if we still have data after handling missing values
+    if len(X) == 0:
+        raise ValueError(f"All rows were removed during missing value handling. Original data had {len(df)} rows. Try using strategy='impute'.")
+    
     y = y[X.index]  # Align with X after dropping
     
     # Identify column types
     column_types = identify_column_types(X)
     
-    # Drop text columns (too high cardinality for most models)
+    # Handle text columns intelligently
+    dropped_columns = []
+    print(f"DEBUG: Before text handling - X shape: {X.shape}, columns: {list(X.columns)}")
+    print(f"DEBUG: Column types - text: {column_types['text']}, categorical: {column_types['categorical']}, numeric: {column_types['numeric']}")
+    
     if column_types["text"]:
-        X = X.drop(columns=column_types["text"])
-        dropped_columns = column_types["text"]
-    else:
-        dropped_columns = []
+        # Check if we have other features
+        non_text_cols = [col for col in X.columns if col not in column_types["text"]]
+        
+        if len(non_text_cols) > 0:
+            # We have other features, safe to drop text columns
+            X = X.drop(columns=column_types["text"])
+            dropped_columns = column_types["text"]
+            print(f"Dropped {len(dropped_columns)} text columns with high cardinality")
+        else:
+            # Text columns are the only features - try to use them
+            print(f"Warning: Only text columns available. Attempting to encode them as categorical.")
+            print(f"DEBUG: Moving text columns to categorical: {column_types['text']}")
+            # Treat high-cardinality text as categorical (will be label-encoded)
+            column_types["categorical"].extend(column_types["text"])
+            column_types["text"] = []
+            print(f"DEBUG: After move - text: {column_types['text']}, categorical: {column_types['categorical']}")
+    
+    # Check if we still have columns
+    print(f"DEBUG: After text handling - X shape: {X.shape}, columns: {list(X.columns)}")
+    if X.shape[1] == 0:
+        error_msg = (
+            f"No features remaining after preprocessing.\n"
+            f"Original dataframe had {len(df.columns)} columns including target.\n"
+            f"After separating target '{target_column}', had {len(df.columns)-1} feature columns.\n"
+            f"Columns dropped as text: {dropped_columns}\n"
+            f"This suggests all non-target columns were classified as high-cardinality text and dropped.\n"
+            f"Try using a dataset with numeric or categorical features."
+        )
+        raise ValueError(error_msg)
     
     # Update column types after dropping
     column_types = identify_column_types(X)
@@ -305,6 +379,14 @@ def preprocess_for_supervised(
     
     # Scale numeric features
     numeric_cols = [col for col in X.columns if X[col].dtype in ['int64', 'float64']]
+    
+    # Final validation before scaling
+    if len(X) == 0:
+        raise ValueError(f"No samples remaining after preprocessing. Check your data quality and missing value strategy.")
+    
+    if X.shape[1] == 0:
+        raise ValueError("No features remaining after preprocessing. Ensure your data has numeric or categorical columns.")
+    
     X, scaler = scale_features(X, numeric_cols, method=config.scaling_method)
     
     # Train/test split
@@ -358,16 +440,39 @@ def preprocess_for_unsupervised(
     """
     original_columns = list(df.columns)
     
-    # Handle missing values
-    df, imputers = handle_missing_values(df, strategy=config.missing_strategy)
+    # Handle missing values with fallback
+    try:
+        df, imputers = handle_missing_values(df, strategy=config.missing_strategy)
+    except ValueError as e:
+        if "All" in str(e) and "rows contain missing values" in str(e):
+            # Fallback to imputation
+            print(f"Warning: {e}. Falling back to imputation strategy.")
+            df, imputers = handle_missing_values(df, strategy="impute")
+        else:
+            raise
+    
+    # Validate we still have data
+    if len(df) == 0:
+        raise ValueError("All rows were removed during preprocessing. Try using strategy='impute'.")
     
     # Identify column types
     column_types = identify_column_types(df)
     
-    # Drop text columns
+    # Drop text columns intelligently
     if column_types["text"]:
-        df = df.drop(columns=column_types["text"])
-        dropped_columns = column_types["text"]
+        # Check if there are non-text columns
+        non_text_cols = [col for col in df.columns if col not in column_types["text"]]
+        if len(non_text_cols) > 0:
+            # Safe to drop text columns
+            df = df.drop(columns=column_types["text"])
+            dropped_columns = column_types["text"]
+            print(f"Dropped text columns for unsupervised learning: {column_types['text']}")
+        else:
+            # Only text columns exist - treat them as categorical
+            print(f"Text columns are the only features. Encoding them as categorical: {column_types['text']}")
+            column_types["categorical"].extend(column_types["text"])
+            column_types["text"] = []
+            dropped_columns = []
     else:
         dropped_columns = []
     

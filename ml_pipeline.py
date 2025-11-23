@@ -147,6 +147,14 @@ def train_classification_models(data_bundle: DataBundle) -> List[ModelResult]:
         
         except Exception as e:
             print(f"Warning: {model_name} failed: {e}")
+            import traceback
+            print(traceback.format_exc())
+    
+    if not results:
+        print(f"ERROR: No classification models trained successfully.")
+        print(f"X_train shape: {X_train.shape}, y_train shape: {y_train.shape}")
+        print(f"X_test shape: {X_test.shape}, y_test shape: {y_test.shape}")
+        print(f"Unique y_train values: {np.unique(y_train)}")
     
     return results
 
@@ -208,6 +216,13 @@ def train_regression_models(data_bundle: DataBundle) -> List[ModelResult]:
         
         except Exception as e:
             print(f"Warning: {model_name} failed: {e}")
+            import traceback
+            print(traceback.format_exc())
+    
+    if not results:
+        print(f"ERROR: No regression models trained successfully.")
+        print(f"X_train shape: {X_train.shape}, y_train shape: {y_train.shape}")
+        print(f"X_test shape: {X_test.shape}, y_test shape: {y_test.shape}")
     
     return results
 
@@ -388,7 +403,10 @@ def run_pipeline(
         raise ValueError(f"Unsupported task type: {task_type}")
     
     if not results:
-        raise RuntimeError("No models trained successfully")
+        error_msg = f"No models trained successfully for task type: {task_type}. "
+        if task_type in ['classification', 'regression', 'time_series_forecast']:
+            error_msg += "Check that target column is properly set and data has enough samples."
+        raise RuntimeError(error_msg)
     
     # Select best model
     best_result = select_best_model(results, task_type)

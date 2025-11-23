@@ -203,7 +203,7 @@ def sidebar_ml_config():
 
 def main_query_interface():
     """Main interface for natural language queries."""
-    st.title("📊 Speak2Data: Natural Language to Analytics & ML")
+    st.title("Natural Language Driven  Automated Analytics & Machine Learning")
     st.markdown("Ask questions about your data or request machine learning models in plain English.")
     
     # Check if data source and LLM are configured
